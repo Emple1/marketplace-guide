@@ -119,6 +119,13 @@ def postprocess(fragment):
                 cur.decompose()
             h.decompose()
 
+    # «Заголовок», который целиком состоит из ссылки, — это пункт списка вопросов,
+    # случайно оформленный стилем заголовка: делаем его обычным абзацем
+    for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        links = h.find_all("a", href=True)
+        if len(links) == 1 and links[0]["href"].startswith("#") and text_of(links[0]) == text_of(h):
+            h.name = "p"
+
     # Заголовки: якоря для оглавления и ссылок «на раздел»
     used, aliases, orphans = set(), {}, []
     for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
@@ -141,10 +148,35 @@ def postprocess(fragment):
 
     # Внутренние ссылки документа («см. раздел …») ведут на новые якоря заголовков
     ids = {t["id"] for t in soup.find_all(id=True)}
+
+    def norm(t):
+        return re.sub(r"[\W_]+", " ", re.sub(r"\s\d+$", "", t)).strip().lower()
+
+    def find_by_text(a):
+        """Закладка потерялась — ищем раздел с тем же названием (заголовок или жирный абзац)."""
+        want = norm(text_of(a))
+        if not want:
+            return None
+        for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            if h.get("id") and norm(h.get("data-title", "")) == want:
+                return h["id"]
+        for p in soup.find_all("p"):
+            if p is a.parent or p.find("a", href=True):
+                continue
+            st = p.find("strong")
+            if st is not None and norm(text_of(p)) == want == norm(text_of(st)):
+                if not p.get("id"):
+                    p["id"] = slugify(text_of(p), used)
+                    ids.add(p["id"])
+                return p["id"]
+        return None
+
     for a in soup.find_all("a", href=True):
         if not a["href"].startswith("#"):
             continue
         target = aliases.get(a["href"][1:], a["href"][1:])
+        if target not in ids:
+            target = find_by_text(a) or target
         if target in ids:
             a["href"] = "#" + target
         else:
