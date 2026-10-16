@@ -1,0 +1,65 @@
+# Ночная публикация инструкции на GitHub Pages.
+# Каждую ночь скачивает Google Doc, собирает HTML + Word и выкладывает на сайт.
+# Запустить вручную: вкладка Actions → «Публикация инструкции» → Run workflow.
+name: Публикация инструкции
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # 03:00 по Москве (время в cron — UTC)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Публиковать, даже если разделов/картинок стало намного меньше"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write          # чтобы GitHub не отключал ночной запуск через 60 дней без коммитов
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установка библиотек
+        run: pip install -r requirements.txt
+
+      - name: Сборка из Google Doc
+        run: python build.py
+
+      - name: Адрес сайта
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Проверка и подготовка сайта
+        run: python tools/check_and_prepare.py "${{ steps.pages.outputs.base_url }}" ${{ inputs.force && '--force' || '' }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Публикация
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Не дать GitHub отключить ночной запуск
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/publish.yml/enable" || true

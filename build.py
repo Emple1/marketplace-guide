@@ -385,6 +385,10 @@ def main():
 
     out = DIST / f"{name}.html"
     out.write_text(page, encoding="utf-8")
+    # Сводка для проверки перед публикацией: не пропала ли половина документа
+    stats = {"headings": content.count("<h1") + content.count("<h2") + content.count("<h3"),
+             "images": content.count("<img"), "built": today}
+    (DIST / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
     print(f"Готово: {out}  ({out.stat().st_size / 2**20:.1f} МБ)")
     print(f"        {DIST / docx_name}  ({size_mb:.1f} МБ)"
           + ("" if embed else "  ← отправляйте клиенту вместе с HTML"))
