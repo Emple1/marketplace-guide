@@ -123,7 +123,7 @@ def text_of(tag):
     return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
 
 
-def postprocess(fragment, own_doc_id=None, support_url=None):
+def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=()):
     soup = BeautifulSoup(fragment, "html.parser")
 
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
@@ -312,6 +312,11 @@ def postprocess(fragment, own_doc_id=None, support_url=None):
             a["rel"] = "noopener"
 
     remove_marketplace_lists(soup)
+    # Разделы из config.json → "collapsed" показываются свёрнутыми (кнопка «Показать полностью»)
+    fold = {norm_space(t).lower() for t in collapsed}
+    for h in soup.find_all(["h1", "h2", "h3"]):
+        if h.get("data-title", "").lower() in fold:
+            h["data-fold"] = "1"
     if support_url:
         link_support(soup, support_url)
     tag_marketplaces(soup)
@@ -495,7 +500,8 @@ def main():
     for msg in result.messages:
         if "Unrecognised paragraph style" not in msg.message:
             print("  ·", msg.message)
-    content = postprocess(result.value, doc_id(cfg.get("google_doc", "")), cfg.get("support_url"))
+    content = postprocess(result.value, doc_id(cfg.get("google_doc", "")), cfg.get("support_url"),
+                          cfg.get("collapsed", []))
 
     DIST.mkdir(exist_ok=True)
     name = cfg["file_name"]

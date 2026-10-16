@@ -122,6 +122,20 @@ body {
 .chip-btn:hover { border-color: var(--accent); }
 .chip-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mp-hidden { display: none !important; }
+.folded { display: none !important; }
+.fold-btn {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0 0 18px; padding: 6px 14px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--paper); color: var(--accent); font: inherit; font-size: 14px;
+  font-weight: 500; cursor: pointer;
+}
+.fold-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.fold-btn svg { width: 16px; height: 16px; transition: transform .2s; }
+.fold-btn.open svg { transform: rotate(180deg); }
+.fold-fade { position: relative; }
+.fold-fade::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em; pointer-events: none;
+  background: linear-gradient(transparent, var(--paper));
+}
 .mp-banner {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 24px; padding: 12px 16px;
   border-radius: 12px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); font-size: 14px;
@@ -268,6 +282,9 @@ mark.hit.current { outline: 2px solid var(--accent); }
   .content img { box-shadow: none; break-inside: avoid; }
   .content h1, .content h2, .content h3 { break-after: avoid; }
   .callout, figure, table { break-inside: avoid; }
+  .folded { display: revert !important; }
+  .fold-btn { display: none !important; }
+  .fold-fade::after { display: none; }
 }
 </style>
 </head>
@@ -493,6 +510,42 @@ mark.hit.current { outline: 2px solid var(--accent); }
   var sbEl = document.getElementById('sidebar'), sBox = document.getElementById('searchBox');
   sbEl.addEventListener('scroll', function () { sBox.classList.toggle('stuck', sbEl.scrollTop > 0); }, { passive: true });
 
+  /* Сворачиваемые разделы: видно начало (первый абзац), остальное — по кнопке */
+  var folds = [];
+  content.querySelectorAll('[data-fold]').forEach(function (h) {
+    var rest = [], el = h.nextElementSibling, level = +h.tagName[1];
+    while (el && !(/^H[1-6]$/.test(el.tagName) && +el.tagName[1] <= level)) { rest.push(el); el = el.nextElementSibling; }
+    var lead = rest[0] && rest[0].tagName === 'P' ? rest.shift() : null;
+    if (!rest.length) return;
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'fold-btn';
+    btn.innerHTML = '<span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+    rest[rest.length - 1].after(btn);
+    var f = { h: h, rest: rest, lead: lead, btn: btn, key: 'fold-' + h.id };
+    f.set = function (open, save) {
+      rest.forEach(function (e) { e.classList.toggle('folded', !open); });
+      if (lead) lead.classList.toggle('fold-fade', !open);
+      if (!open && lead) lead.after(btn); else rest[rest.length - 1].after(btn);
+      btn.classList.toggle('open', open);
+      btn.firstChild.textContent = open ? 'Свернуть' : 'Показать полностью';
+      if (save) store.set(f.key, open ? 'open' : 'closed');
+    };
+    btn.onclick = function () {
+      var open = !btn.classList.contains('open');
+      f.set(open, true);
+      if (!open) h.scrollIntoView({ block: 'start' });
+    };
+    f.set(store.get(f.key) === 'open', false);
+    folds.push(f);
+  });
+  // Если поиск или ссылка ведут внутрь свёрнутого раздела — разворачиваем его
+  function unfold(el) {
+    folds.forEach(function (f) {
+      if (f.rest.some(function (e) { return e === el || e.contains(el); }) && !f.btn.classList.contains('open')) f.set(true, false);
+    });
+  }
+
   /* Мобильное меню */
   function closeNav() { document.body.classList.remove('nav-open'); }
   document.getElementById('menuBtn').onclick = function () { document.body.classList.toggle('nav-open'); };
@@ -638,7 +691,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     roots.forEach(function (root) {
       var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), nodes = [], n;
       while ((n = walker.nextNode())) {
-        if (n.parentElement.closest('.mp-hidden, .anchor')) continue;
+        if (n.parentElement.closest('.mp-hidden, .anchor')) continue;  // свёрнутые разделы ищем — при переходе развернём
         if (test(n.nodeValue).length) nodes.push(n);
       }
       nodes.forEach(function (node) {
@@ -696,6 +749,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     var r = found[i];
     if (!r) return;
     clear();
+    r.s.els.forEach(unfold);
     mark(r.s.els, wordRanges(r.terms));
     document.documentElement.style.scrollBehavior = 'auto';
     r.s.h.scrollIntoView({ block: 'start' });
@@ -722,6 +776,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     if (pos >= 0) hits[pos].classList.remove('current');
     pos = (i + hits.length) % hits.length;
     hits[pos].classList.add('current');
+    unfold(hits[pos]);
     hits[pos].scrollIntoView({ block: 'center' });
     cnt.textContent = 'Совпадение ' + (pos + 1) + ' из ' + hits.length;
   }
