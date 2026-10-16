@@ -11,6 +11,7 @@
 """
 import argparse
 import base64
+import csv
 import datetime
 import hashlib
 import html
@@ -390,35 +391,60 @@ def norm_title(t):
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", t.lower().replace("ё", "е"))).strip()
 
 
-def read_feature_matrix(soup):
-    """Таблица «Функционал по маркетплейсам» из документа: какой раздел к каким маркетплейсам относится.
+MATRIX_FILE = ROOT / "matrix.csv"
 
-    Строки — названия разделов (как заголовки в документе), столбцы — маркетплейсы, «+» — есть.
-    Таблица нужна только фильтру: её раздел убирается со страницы. Нет таблицы — пустой словарь."""
+
+def parse_matrix(rows):
+    """Строки таблицы (списки текстов ячеек) → {название раздела: [коды маркетплейсов]}.
+
+    Первая строка — шапка: «Раздел; WB; Ozon; …» (столбцы распознаются по названию маркетплейса),
+    дальше — разделы как заголовки в документе (можно начало названия; «— » перед подразделом не мешает),
+    в клетках «+» — есть, пусто — нет, «?» — не уверены (считаем, что есть)."""
+    if not rows:
+        return {}
+    cols = [marketplaces_in(c) for c in rows[0]]
+    matrix = {}
+    for cells in rows[1:]:
+        name = norm_title(cells[0]) if cells else ""
+        if name:
+            matrix[name] = [cols[i][0] for i, c in enumerate(cells[1:], 1)
+                            if i < len(cols) and len(cols[i]) == 1 and c.strip().lower() in MATRIX_YES]
+    return matrix
+
+
+def load_matrix_file():
+    """Матрица функционала из matrix.csv в папке проекта (её ведёт Claude по чек-листу пользователя)."""
+    if not MATRIX_FILE.exists():
+        return {}
+    with open(MATRIX_FILE, encoding="utf-8-sig", newline="") as f:
+        rows = [r for r in csv.reader(f, delimiter=";") if any(c.strip() for c in r)]
+    matrix = parse_matrix(rows)
+    if matrix:
+        print(f"  · матрица функционала (matrix.csv): {len(matrix)} строк")
+    return matrix
+
+
+def read_feature_matrix(soup):
+    """Матрица функционала: matrix.csv + (запасной вариант) таблица «Функционал по маркетплейсам» в документе.
+
+    Таблица из документа нужна только фильтру: её раздел убирается со страницы. Строки из документа
+    дополняют/переопределяют строки файла."""
+    matrix = load_matrix_file()
     levels = ["h1", "h2", "h3", "h4", "h5", "h6"]
     head = next((h for h in soup.find_all(levels) if MATRIX_TITLE in text_of(h).lower()), None)
     if head is None:
-        return {}
+        return matrix
     level, section, el = int(head.name[1]), [head], head.find_next_sibling()
     while el is not None and not (el.name in levels and int(el.name[1]) <= level):
         section.append(el)
         el = el.find_next_sibling()
     table = next((t for x in section for t in ([x] if x.name == "table" else x.find_all("table"))), None)
-    matrix = {}
     if table is not None:
-        rows = table.find_all("tr")
-        cols = [marketplaces_in(text_of(c)) for c in rows[0].find_all(["td", "th"])] if rows else []
-        for tr in rows[1:]:
-            cells = tr.find_all(["td", "th"])
-            name = norm_title(text_of(cells[0])) if cells else ""
-            if not name:
-                continue
-            codes = [cols[i][0] for i, c in enumerate(cells[1:], 1)
-                     if i < len(cols) and len(cols[i]) == 1 and text_of(c).lower() in MATRIX_YES]
-            matrix[name] = codes
+        doc_matrix = parse_matrix([[text_of(c) for c in tr.find_all(["td", "th"])] for tr in table.find_all("tr")])
+        matrix.update(doc_matrix)
+        print(f"  · матрица функционала из документа: {len(doc_matrix)} строк")
     for x in section:
         x.decompose()
-    print(f"  · матрица функционала: {len(matrix)} строк")
     return matrix
 
 
