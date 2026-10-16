@@ -91,6 +91,22 @@ body {
 .search-info.on { display: flex; }
 .search-info button { border: 1px solid var(--border); background: var(--paper); color: var(--text); border-radius: 6px; cursor: pointer; padding: 1px 8px; }
 
+.mp-filter { margin-top: 20px; }
+.mp-title { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn {
+  border: 1px solid var(--border); background: var(--paper); color: var(--text); border-radius: 999px;
+  padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; line-height: 1.4;
+}
+.chip-btn:hover { border-color: var(--accent); }
+.chip-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mp-hidden { display: none !important; }
+.mp-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 24px; padding: 12px 16px;
+  border-radius: 12px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); font-size: 14px;
+}
+.mp-banner[hidden] { display: none; }
+.mp-banner button { margin-left: auto; }
 .toc { list-style: none; margin: 0; padding: 0; font-size: 14px; }
 .toc a {
   display: block; padding: 5px 10px; border-radius: 8px; color: var(--muted); text-decoration: none;
@@ -264,6 +280,14 @@ mark.hit.current { outline: 2px solid var(--accent); }
       <div class="hero">
         <div class="kicker">{{KICKER}}</div>
         <h1>{{TITLE}}</h1>
+        <div class="mp-filter" id="mpFilter" hidden>
+          <div class="mp-title">Показать настройки для маркетплейса</div>
+          <div class="chips" id="mpChips"></div>
+        </div>
+      </div>
+      <div class="mp-banner" id="mpBanner" hidden>
+        <span>Показаны разделы только по <b id="mpName"></b> и общие разделы.</span>
+        <button class="chip-btn" id="mpReset">Показать все маркетплейсы</button>
       </div>
       <div class="notice" id="oldBrowser" hidden>Браузер устарел и не может показать скриншоты. Откройте инструкцию в свежем Chrome, Edge, Firefox или Яндекс Браузере — или нажмите «Скачать Word».</div>
       <div class="content" id="content">
@@ -371,6 +395,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
       entries.forEach(function (en) { visible[en.target.id] = en.isIntersecting; });
       var cur = null;
       for (var i = 0; i < heads.length; i++) {
+        if (heads[i].offsetParent === null) continue;  // скрыт фильтром
         if (heads[i].getBoundingClientRect().top < 120) cur = heads[i].id;
       }
       if (!cur && heads.length) cur = heads[0].id;
@@ -382,6 +407,50 @@ mark.hit.current { outline: 2px solid var(--accent); }
       }
     }, { rootMargin: '-60px 0px -60% 0px' });
     heads.forEach(function (h) { io.observe(h); });
+  }
+
+  /* Фильтр по маркетплейсу: разделы помечены при сборке атрибутом data-mp */
+  var MP = [['wb', 'Wildberries'], ['ozon', 'Ozon'], ['ym', 'Яндекс Маркет'], ['mm', 'МегаМаркет'],
+            ['ali', 'AliExpress'], ['mvideo', 'М.Видео'], ['lamoda', 'Lamoda'], ['magnit', 'Магнит Маркет']];
+  var tagged = content.querySelectorAll('[data-mp]');
+  // Кнопка — только для маркетплейсов, у которых есть свои разделы (заголовки)
+  var present = MP.filter(function (m) {
+    return content.querySelector(['h1', 'h2', 'h3', 'h4'].map(function (t) { return t + '[data-mp~="' + m[0] + '"]'; }).join(','));
+  });
+  var chips = document.getElementById('mpChips'), mpCurrent = '';
+  function applyMp(code, keepScroll) {
+    mpCurrent = code;
+    tagged.forEach(function (el) {
+      el.classList.toggle('mp-hidden', !!code && el.getAttribute('data-mp').split(' ').indexOf(code) < 0);
+    });
+    heads.forEach(function (h) { links[h.id].parentNode.classList.toggle('mp-hidden', h.classList.contains('mp-hidden')); });
+    chips.querySelectorAll('.chip-btn').forEach(function (b) { b.classList.toggle('on', b.dataset.mp === code); });
+    var banner = document.getElementById('mpBanner');
+    banner.hidden = !code;
+    if (code) document.getElementById('mpName').textContent = present.filter(function (m) { return m[0] === code; })[0][1];
+    store.set('mp-filter', code);
+    try {
+      var u = new URL(location.href);
+      if (code) u.searchParams.set('mp', code); else u.searchParams.delete('mp');
+      history.replaceState(null, '', u);
+    } catch (e) {}
+    if (q && q.value.trim().length >= 2) run();
+    if (!keepScroll) document.querySelector('.doc').scrollIntoView();
+  }
+  if (present.length > 1) {
+    document.getElementById('mpFilter').hidden = false;
+    [['', 'Все']].concat(present).forEach(function (m) {
+      var b = document.createElement('button');
+      b.className = 'chip-btn'; b.dataset.mp = m[0]; b.textContent = m[1];
+      b.onclick = function () { applyMp(m[0]); };
+      chips.appendChild(b);
+    });
+    document.getElementById('mpReset').onclick = function () { applyMp(''); };
+    var start = '';
+    try { start = new URL(location.href).searchParams.get('mp') || ''; } catch (e) {}
+    if (!start) start = store.get('mp-filter') || '';
+    if (!present.some(function (m) { return m[0] === start; })) start = '';
+    applyMp(start, true);
   }
 
   /* Мобильное меню */
@@ -417,7 +486,10 @@ mark.hit.current { outline: 2px solid var(--accent); }
     var term = q.value.trim().toLowerCase();
     if (term.length < 2) { info.classList.remove('on'); return; }
     var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null), nodes = [], n;
-    while ((n = walker.nextNode())) if (n.nodeValue.toLowerCase().indexOf(term) >= 0) nodes.push(n);
+    while ((n = walker.nextNode())) {
+      if (n.parentElement.closest('.mp-hidden')) continue;  // скрыто фильтром маркетплейса
+      if (n.nodeValue.toLowerCase().indexOf(term) >= 0) nodes.push(n);
+    }
     nodes.forEach(function (node) {
       var text = node.nodeValue, lower = text.toLowerCase(), frag = document.createDocumentFragment(), i = 0, j;
       while ((j = lower.indexOf(term, i)) >= 0) {

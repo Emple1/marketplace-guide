@@ -57,6 +57,24 @@ ICONS = {
 }
 CAPTION_RE = re.compile(r"^\s*(рис\.|рисунок|скриншот)\s*\d*", re.I)
 
+# Маркетплейсы для фильтра на странице: раздел относится к маркетплейсу, если тот назван
+# в заголовке раздела (или выше по вложенности). Код → способы написания в заголовках.
+MARKETPLACES = {
+    "wb": r"wildberries|\bрвб\b|\bwb\b|\bвб\b",
+    "ozon": r"ozon|озон",
+    "ym": r"яндекс\s*\.?\s*маркет|\bям\b",
+    "mm": r"мегамаркет|megamarket",
+    "ali": r"aliexpress|алиэкспресс",
+    "mvideo": r"м\.\s*видео|мвидео|эльдорадо",
+    "lamoda": r"lamoda|ламода",
+    "magnit": r"магнит\s*маркет",
+}
+
+
+def marketplaces_in(text):
+    t = text.lower()
+    return [code for code, rx in MARKETPLACES.items() if re.search(rx, t)]
+
 
 def load_config():
     return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
@@ -289,7 +307,30 @@ def postprocess(fragment, own_doc_id=None):
             a["target"] = "_blank"
             a["rel"] = "noopener"
 
+    tag_marketplaces(soup)
     return str(soup)
+
+
+def tag_marketplaces(soup):
+    """Помечает блоки атрибутом data-mp="wb ozon …" — по ним работает фильтр на странице."""
+    stack = []  # (уровень заголовка, маркетплейсы)
+    for el in soup.find_all(recursive=False):
+        if not hasattr(el, "name") or el.name is None:
+            continue
+        if re.fullmatch(r"h[1-6]", el.name):
+            level = int(el.name[1])
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, marketplaces_in(el.get("data-title", ""))))
+        mps = next((m for _, m in reversed(stack) if m), [])
+        # Строка из одного названия маркетплейса («Wildberries», «OZON» в списках)
+        if not mps and el.name == "p" and len(text_of(el)) < 40:
+            own = marketplaces_in(text_of(el))
+            rest = re.sub(MARKETPLACES[own[0]], "", text_of(el).lower()) if len(own) == 1 else "x"
+            if not re.sub(r"[\W_]|fbs|fbo", "", rest):  # кроме названия ничего нет
+                mps = own
+        if mps:
+            el["data-mp"] = " ".join(mps)
 
 
 def logo_html(cfg):
