@@ -431,7 +431,8 @@ def load_matrix_sheet(url):
         print(f"  · ВНИМАНИЕ: не понял ссылку на таблицу матрицы: {url}")
         return {}
     gid = re.search(r"[#&?]gid=(\d+)", url)
-    export = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv&gid={gid.group(1) if gid else 0}"
+    # без gid Google отдаёт первый лист (у загруженных .xlsx номер листа не 0)
+    export = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv" + (f"&gid={gid.group(1)}" if gid else "")
     try:
         r = requests.get(export, timeout=60)
         ok = r.status_code == 200 and "text/html" not in r.headers.get("Content-Type", "")
