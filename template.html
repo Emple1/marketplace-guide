@@ -575,7 +575,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   var tagged = content.querySelectorAll('[data-mp]');
   // Кнопка — только для маркетплейсов, у которых есть свои разделы (заголовки)
   var present = MP.filter(function (m) {
-    return content.querySelector(['h1', 'h2', 'h3', 'h4'].map(function (t) { return t + '[data-mp~="' + m[0] + '"]'; }).join(','));
+    return content.querySelector('[data-mp-own~="' + m[0] + '"]');
   });
   var chips = document.getElementById('mpChips'), mpCurrent = '';
   function applyMp(code, keepScroll) {

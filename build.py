@@ -128,6 +128,7 @@ def text_of(tag):
 
 def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=()):
     soup = BeautifulSoup(fragment, "html.parser")
+    matrix = read_feature_matrix(soup)
 
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
     for t in soup.select("h1.doc-title, p.doc-subtitle"):
@@ -322,7 +323,7 @@ def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=()):
             h["data-fold"] = "1"
     if support_url:
         link_support(soup, support_url)
-    tag_marketplaces(soup)
+    tag_marketplaces(soup, matrix)
     return str(soup)
 
 
@@ -381,8 +382,64 @@ def remove_marketplace_lists(soup):
         print(f"  · убрано списков-перечислений маркетплейсов: {removed}")
 
 
-def tag_marketplaces(soup):
-    """Помечает блоки атрибутом data-mp="wb ozon …" — по ним работает фильтр на странице."""
+MATRIX_TITLE = "функционал по маркетплейсам"
+MATRIX_YES = {"+", "✓", "✔", "v", "x", "х", "да", "есть", "?"}  # «?» = не уверены → считаем, что есть
+
+
+def norm_title(t):
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", t.lower().replace("ё", "е"))).strip()
+
+
+def read_feature_matrix(soup):
+    """Таблица «Функционал по маркетплейсам» из документа: какой раздел к каким маркетплейсам относится.
+
+    Строки — названия разделов (как заголовки в документе), столбцы — маркетплейсы, «+» — есть.
+    Таблица нужна только фильтру: её раздел убирается со страницы. Нет таблицы — пустой словарь."""
+    levels = ["h1", "h2", "h3", "h4", "h5", "h6"]
+    head = next((h for h in soup.find_all(levels) if MATRIX_TITLE in text_of(h).lower()), None)
+    if head is None:
+        return {}
+    level, section, el = int(head.name[1]), [head], head.find_next_sibling()
+    while el is not None and not (el.name in levels and int(el.name[1]) <= level):
+        section.append(el)
+        el = el.find_next_sibling()
+    table = next((t for x in section for t in ([x] if x.name == "table" else x.find_all("table"))), None)
+    matrix = {}
+    if table is not None:
+        rows = table.find_all("tr")
+        cols = [marketplaces_in(text_of(c)) for c in rows[0].find_all(["td", "th"])] if rows else []
+        for tr in rows[1:]:
+            cells = tr.find_all(["td", "th"])
+            name = norm_title(text_of(cells[0])) if cells else ""
+            if not name:
+                continue
+            codes = [cols[i][0] for i, c in enumerate(cells[1:], 1)
+                     if i < len(cols) and len(cols[i]) == 1 and text_of(c).lower() in MATRIX_YES]
+            matrix[name] = codes
+    for x in section:
+        x.decompose()
+    print(f"  · матрица функционала: {len(matrix)} строк")
+    return matrix
+
+
+def tag_marketplaces(soup, matrix=None):
+    """Помечает блоки атрибутом data-mp="wb ozon …" — по ним работает фильтр на странице.
+
+    Маркетплейсы раздела берутся из матрицы функционала (если раздел в ней есть), иначе из его
+    заголовка («Wildberries - …»). Подразделы наследуют разметку раздела выше."""
+    matrix = matrix or {}
+    used_rows = set()
+
+    def from_matrix(title):
+        t = norm_title(title)
+        # точное совпадение или строка матрицы — начало названия раздела (целыми словами)
+        key = t if t in matrix else next((k for k in sorted(matrix, key=len, reverse=True)
+                                          if t.startswith(k + " ")), None)
+        if key is None:
+            return None
+        used_rows.add(key)
+        return matrix[key] or ["none"]  # ни одной галочки — раздел не показывается ни при одном фильтре
+
     stack = []  # (уровень заголовка, маркетплейсы)
     for el in soup.find_all(recursive=False):
         if not hasattr(el, "name") or el.name is None:
@@ -391,7 +448,11 @@ def tag_marketplaces(soup):
             level = int(el.name[1])
             while stack and stack[-1][0] >= level:
                 stack.pop()
-            stack.append((level, marketplaces_in(el.get("data-title", ""))))
+            title = el.get("data-title", "")
+            own = marketplaces_in(title)
+            if own:  # маркетплейс назван в заголовке — по таким разделам строятся кнопки фильтра
+                el["data-mp-own"] = " ".join(own)
+            stack.append((level, own or from_matrix(title) or []))
         mps = next((m for _, m in reversed(stack) if m), [])
         # Строка из одного названия маркетплейса («Wildberries», «OZON» в списках)
         if not mps and el.name == "p" and len(text_of(el)) < 40:
@@ -401,6 +462,22 @@ def tag_marketplaces(soup):
                 mps = own
         if mps:
             el["data-mp"] = " ".join(mps)
+
+    # Заголовок раздела показываем, если виден хоть один его подраздел (иначе подраздел
+    # «повиснет» без родителя): добавляем заголовку маркетплейсы подразделов
+    heads = [h for h in soup.find_all(re.compile(r"^h[1-6]$"), recursive=False) if h.get("data-mp")]
+    for i, h in enumerate(heads):
+        level, codes = int(h.name[1]), set(h["data-mp"].split())
+        for sub in heads[i + 1:]:
+            if int(sub.name[1]) <= level:
+                break
+            codes |= set(sub["data-mp"].split())
+        codes.discard("none") if len(codes) > 1 else None
+        h["data-mp"] = " ".join(sorted(codes))
+
+    for key in matrix:
+        if key not in used_rows:
+            print(f"  · строка матрицы не нашла раздел: «{key}»")
 
 
 def footer_html(cfg):
@@ -449,6 +526,41 @@ def optimize_docx(docx_bytes):
     return out.getvalue()
 
 
+def strip_matrix_from_docx(docx_bytes):
+    """Убирает раздел «Функционал по маркетплейсам» из .docx для клиентов (он только для фильтра)."""
+    import docx
+    d = docx.Document(io.BytesIO(docx_bytes))
+
+    def heading_level(p):
+        m = re.search(r"(?:heading|заголовок)\s*(\d)", (p.style.name or "").lower()) if p.style is not None else None
+        return int(m.group(1)) if m else None
+
+    body = d.element.body
+    paras = {p._p: p for p in d.paragraphs}
+    start = level = None
+    for p in d.paragraphs:
+        lvl = heading_level(p)
+        if lvl and MATRIX_TITLE in p.text.lower():
+            start, level = p._p, lvl
+            break
+    if start is None:
+        return docx_bytes
+    remove, el = [start], start.getnext()
+    while el is not None and el.tag != docx.oxml.ns.qn("w:sectPr"):
+        p = paras.get(el)
+        lvl = heading_level(p) if p is not None else None
+        if lvl and lvl <= level:
+            break
+        remove.append(el)
+        el = el.getnext()
+    for el in remove:
+        body.remove(el)
+    out = io.BytesIO()
+    d.save(out)
+    print(f"  · матрица функционала убрана из Word-версии ({len(remove)} блоков)")
+    return out.getvalue()
+
+
 def media_index(docx_bytes):
     """Хэш содержимого картинки → её путь внутри .docx (word/media/imageN.png)."""
     z = zipfile.ZipFile(io.BytesIO(docx_bytes))
@@ -476,6 +588,10 @@ def main():
         docx_bytes = optimize_docx(docx_bytes)
         print(f"  {before / 2**20:.1f} МБ → {len(docx_bytes) / 2**20:.1f} МБ")
 
+    # Страница строится из полного документа (из него же читается матрица функционала),
+    # а клиентам в Word уходит документ без матрицы
+    source_bytes = docx_bytes
+    docx_bytes = strip_matrix_from_docx(docx_bytes)
     size_mb = len(docx_bytes) / 2**20
     embed = not args.separate_docx and size_mb <= EMBED_LIMIT_MB
 
@@ -499,7 +615,7 @@ def main():
         return attrs
 
     print("Превращаю в HTML …")
-    result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=STYLE_MAP,
+    result = mammoth.convert_to_html(io.BytesIO(source_bytes), style_map=STYLE_MAP,
                                      convert_image=mammoth.images.img_element(convert_image))
     for msg in result.messages:
         if "Unrecognised paragraph style" not in msg.message:
