@@ -80,8 +80,14 @@ body {
 .layout { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
 .sidebar {
   position: sticky; top: 60px; height: calc(100vh - 60px); overflow-y: auto;
-  padding: 20px 14px 40px 20px; border-right: 1px solid var(--border);
+  padding: 20px 14px 40px 20px; border-right: 1px solid var(--border); background: var(--bg);
 }
+/* Поиск всегда виден вверху панели, оглавление листается под ним */
+.search-box {
+  position: sticky; top: -20px; z-index: 2; margin: -20px -14px 4px -20px; padding: 20px 14px 4px 20px;
+  background: inherit; border-bottom: 1px solid transparent;
+}
+.search-box.stuck { border-bottom-color: var(--border); }
 .search { display: block; position: relative; margin-bottom: 14px; }
 .search input {
   width: 100%; height: 40px; padding: 0 12px 0 36px; border-radius: 10px;
@@ -288,6 +294,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
+    <div class="search-box" id="searchBox">
     <label class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="q" type="search" placeholder="Поиск: например, «заказы вб»" autocomplete="off">
@@ -295,6 +302,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     <div class="search-info" id="qInfo">
       <span id="qCount"></span><span class="spacer"></span>
       <button id="qPrev" aria-label="Предыдущее">↑</button><button id="qNext" aria-label="Следующее">↓</button>
+    </div>
     </div>
     <div class="results" id="qResults"></div>
     <nav><ul class="toc" id="toc"></ul></nav>
@@ -430,7 +438,9 @@ mark.hit.current { outline: 2px solid var(--accent); }
       if (cur && links[cur] && document.body.classList.contains('nav-open') === false) {
         var l = links[cur], sb = document.getElementById('sidebar');
         var r = l.getBoundingClientRect(), s = sb.getBoundingClientRect();
-        if (r.top < s.top + 60 || r.bottom > s.bottom - 20) l.scrollIntoView({ block: 'nearest' });
+        // Листаем только саму панель (не страницу) и не прячем пункт под закреплённым поиском
+        var top = s.top + document.getElementById('searchBox').offsetHeight;
+        if (r.top < top + 10 || r.bottom > s.bottom - 20) sb.scrollTop += r.top - top - (s.bottom - top) / 3;
       }
     }, { rootMargin: '-60px 0px -60% 0px' });
     heads.forEach(function (h) { io.observe(h); });
@@ -479,6 +489,9 @@ mark.hit.current { outline: 2px solid var(--accent); }
     if (!present.some(function (m) { return m[0] === start; })) start = '';
     applyMp(start, true);
   }
+
+  var sbEl = document.getElementById('sidebar'), sBox = document.getElementById('searchBox');
+  sbEl.addEventListener('scroll', function () { sBox.classList.toggle('stuck', sbEl.scrollTop > 0); }, { passive: true });
 
   /* Мобильное меню */
   function closeNav() { document.body.classList.remove('nav-open'); }
@@ -715,7 +728,11 @@ mark.hit.current { outline: 2px solid var(--accent); }
   function choose(i) {
     var items = resBox.querySelectorAll('.result');
     items.forEach(function (b, k) { b.classList.toggle('sel', k === i); });
-    if (items[i]) items[i].scrollIntoView({ block: 'nearest' });
+    if (items[i]) {
+      var ir = items[i].getBoundingClientRect(), top = sbEl.getBoundingClientRect().top + sBox.offsetHeight;
+      if (ir.top < top) sbEl.scrollTop -= top - ir.top + 8;
+      else if (ir.bottom > innerHeight) sbEl.scrollTop += ir.bottom - innerHeight + 8;
+    }
     sel = i;
   }
   q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 250); });
