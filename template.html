@@ -54,7 +54,9 @@ body {
   background: color-mix(in srgb, var(--paper) 88%, transparent);
   backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
 }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; color: inherit; text-decoration: none; }
+.brand:hover span { color: var(--accent); }
+.footer a { color: var(--accent); }
 .brand img { height: 46px; width: auto; }
 .brand .badge-logo {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
@@ -89,6 +91,19 @@ body {
 .search svg { position: absolute; left: 11px; top: 11px; width: 18px; height: 18px; color: var(--muted); }
 .search-info { display: none; align-items: center; gap: 6px; margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
 .search-info.on { display: flex; }
+.results:empty { display: none; }
+.results { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.results-title { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px 2px; }
+.result {
+  display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); font: inherit;
+  padding: 7px 10px; border-radius: 8px; cursor: pointer;
+}
+.result:hover, .result.sel { background: var(--accent-soft); }
+.r-title { display: block; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.r-crumbs { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+.content .flash { animation: flash 1.6s ease-out; border-radius: 6px; }
+@keyframes flash { 0%, 30% { background: var(--mark); } 100% { background: transparent; } }
+.search-info button[hidden] { display: none; }
 .search-info button { border: 1px solid var(--border); background: var(--paper); color: var(--text); border-radius: 6px; cursor: pointer; padding: 1px 8px; }
 
 .mp-filter { margin-top: 20px; }
@@ -256,7 +271,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   <button class="btn icon" id="menuBtn" aria-label="Оглавление">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <div class="brand">{{LOGO}}<span>{{TITLE}}</span></div>
+  <a class="brand" href="{{HOME_URL}}" target="_blank" rel="noopener" title="Сайт модуля «Управление маркетплейсами на 1С»">{{LOGO}}<span>{{TITLE}}</span></a>
   <div class="spacer"></div>
   <button class="btn icon" id="themeBtn" aria-label="Сменить тему" title="Светлая / тёмная тема">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -275,12 +290,13 @@ mark.hit.current { outline: 2px solid var(--accent); }
   <aside class="sidebar" id="sidebar">
     <label class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" placeholder="Поиск по инструкции" autocomplete="off">
+      <input id="q" type="search" placeholder="Поиск: например, «заказы вб»" autocomplete="off">
     </label>
     <div class="search-info" id="qInfo">
       <span id="qCount"></span><span class="spacer"></span>
       <button id="qPrev" aria-label="Предыдущее">↑</button><button id="qNext" aria-label="Следующее">↓</button>
     </div>
+    <div class="results" id="qResults"></div>
     <nav><ul class="toc" id="toc"></ul></nav>
   </aside>
   <div class="scrim" id="scrim"></div>
@@ -503,37 +519,190 @@ mark.hit.current { outline: 2px solid var(--accent); }
   addEventListener('scroll', function () { totop.classList.toggle('on', scrollY > 800); }, { passive: true });
   totop.onclick = function () { scrollTo({ top: 0 }); };
 
-  /* Поиск */
+  /* Поиск: умный по разделам (синонимы, формы слов) + точные совпадения в тексте */
   var q = document.getElementById('q'), info = document.getElementById('qInfo'), cnt = document.getElementById('qCount');
-  var hits = [], pos = -1, timer;
+  var resBox = document.getElementById('qResults');
+  var hits = [], pos = -1, timer, found = [], sel = -1;
+
+  // Синонимы: любое слово из группы находит остальные («вб» → Wildberries, РВБ …)
+  var SYN = [
+    ['wildberries', 'вб', 'wb', 'рвб', 'вайлдберриз', 'валберис', 'вайлдбериз', 'вилдберис'],
+    ['ozon', 'озон'],
+    ['яндекс', 'ям', 'ym', 'yandex', 'яндексмаркет'],
+    ['мегамаркет', 'megamarket', 'мм', 'сбермегамаркет'],
+    ['aliexpress', 'али', 'алиэкспресс', 'ali', 'алиэкспрес'],
+    ['мвидео', 'видео', 'mvideo', 'эльдорадо'],
+    ['lamoda', 'ламода'],
+    ['магнит', 'магнитмаркет'],
+    ['токен', 'ключ', 'токены', 'ключи'],
+    ['маркировка', 'чз', 'честный', 'маркировкой'],
+    ['цена', 'цены', 'прайс', 'репрайсер'],
+    ['остаток', 'остатки', 'стоки'],
+    ['обновление', 'автообновление', 'обновить'],
+    ['отчет', 'отчеты', 'отчетность'],
+    ['заказ', 'заказы', 'сборочные', 'задания']
+  ];
+  var STOP = { 'как': 1, 'где': 1, 'что': 1, 'в': 1, 'во': 1, 'на': 1, 'по': 1, 'для': 1, 'и': 1, 'с': 1, 'со': 1, 'о': 1,
+               'об': 1, 'не': 1, 'ли': 1, 'мне': 1, 'я': 1, 'это': 1, 'или': 1, 'к': 1, 'у': 1, 'из': 1, 'а': 1 };
+  function words(text) {
+    return text.toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(Boolean);
+  }
+  // Основа слова: «заказы» → «зака», «установить» → «устано» (находит «установка», «установки» …)
+  function stem(w) {
+    if (w.length <= 3) return w;
+    return w.slice(0, w.length <= 5 ? w.length - 1 : Math.max(4, Math.ceil(w.length * 0.6)));
+  }
+  function fits(token, alt) { return alt.length <= 3 ? token === alt : token.indexOf(stem(alt)) === 0; }
+  // Первые 8 групп — маркетплейсы (коды как в фильтре)
+  var MP_CODES = ['wb', 'ozon', 'ym', 'mm', 'ali', 'mvideo', 'lamoda', 'magnit'];
+  function alternatives(w) {
+    for (var g = 0; g < SYN.length; g++) {
+      if (SYN[g].some(function (m) { return w === m || (m.length > 3 && w.length > 3 && fits(w, m)); })) {
+        var alts = SYN[g].concat([w]);
+        alts.mp = MP_CODES[g];
+        return alts;
+      }
+    }
+    return [w];
+  }
+  function matches(set, alts) {
+    for (var t in set) for (var i = 0; i < alts.length; i++) if (fits(t, alts[i])) return true;
+    return false;
+  }
+  function toSet(list) { var o = {}; list.forEach(function (w) { o[w] = 1; }); return o; }
+
+  // Разделы: заголовок, путь (заголовки выше) и весь текст раздела вместе с подразделами
+  var sections = [], all = Array.prototype.slice.call(content.children), trail = [];
+  all.forEach(function (el, idx) {
+    if (!/^H[1-6]$/.test(el.tagName) || !el.id) return;
+    var level = +el.tagName[1];
+    while (trail.length && trail[trail.length - 1].level >= level) trail.pop();
+    var els = [el], text = '';
+    for (var k = idx + 1; k < all.length; k++) {
+      var e = all[k];
+      if (/^H[1-6]$/.test(e.tagName) && +e.tagName[1] <= level) break;
+      els.push(e);
+      text += ' ' + e.textContent;
+    }
+    var title = el.getAttribute('data-title') || el.textContent;
+    var crumbs = trail.map(function (t) { return t.title; });
+    sections.push({ h: el, level: level, title: title, crumbs: crumbs,
+                    tw: toSet(words(title)), cw: toSet(words(crumbs.join(' '))),
+                    xw: toSet(words(text)), size: text.length, els: els });
+    trail.push({ level: level, title: title });
+  });
+
+  function smart(query) {
+    var terms = words(query).filter(function (w) { return !STOP[w]; }).map(alternatives);
+    if (!terms.length) return [];
+    var out = [];
+    sections.forEach(function (s) {
+      if (s.h.classList.contains('mp-hidden')) return;
+      var own = (s.h.getAttribute('data-mp') || '').split(' ');
+      var score = 0;
+      for (var i = 0; i < terms.length; i++) {
+        var t = terms[i];
+        // Спросили про маркетплейс, а раздел про другой маркетплейс — пропускаем
+        if (t.mp && own[0] && own.indexOf(t.mp) < 0) return;
+        var add = matches(s.tw, t) ? 10 : matches(s.cw, t) ? 4 : matches(s.xw, t) ? 1 : 0;
+        if (!add) return;
+        score += add;
+      }
+      out.push({ s: s, score: score, terms: terms });
+    });
+    out.sort(function (a, b) { return b.score - a.score || a.s.size - b.s.size; });
+    return out.slice(0, 8);
+  }
+
   function clear() {
     content.querySelectorAll('mark.hit').forEach(function (m) {
       var p = m.parentNode; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize();
     });
     hits = []; pos = -1;
   }
+  // Подсветка внутри элементов: test(text) возвращает список диапазонов [начало, конец]
+  function mark(roots, test) {
+    roots.forEach(function (root) {
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), nodes = [], n;
+      while ((n = walker.nextNode())) {
+        if (n.parentElement.closest('.mp-hidden, .anchor')) continue;
+        if (test(n.nodeValue).length) nodes.push(n);
+      }
+      nodes.forEach(function (node) {
+        var text = node.nodeValue, ranges = test(text), frag = document.createDocumentFragment(), i = 0;
+        ranges.forEach(function (r) {
+          frag.appendChild(document.createTextNode(text.slice(i, r[0])));
+          var m = document.createElement('mark'); m.className = 'hit'; m.textContent = text.slice(r[0], r[1]);
+          frag.appendChild(m); hits.push(m); i = r[1];
+        });
+        frag.appendChild(document.createTextNode(text.slice(i)));
+        node.parentNode.replaceChild(frag, node);
+      });
+    });
+  }
+  function phraseRanges(term) {
+    return function (text) {
+      var lower = text.toLowerCase(), out = [], j = 0;
+      while ((j = lower.indexOf(term, j)) >= 0) { out.push([j, j + term.length]); j += term.length; }
+      return out;
+    };
+  }
+  function wordRanges(terms) {
+    return function (text) {
+      var out = [], re = /[A-Za-zА-Яа-яЁё0-9]+/g, m;
+      while ((m = re.exec(text))) {
+        var w = m[0].toLowerCase().replace(/ё/g, 'е');
+        if (terms.some(function (alts) { return alts.some(function (a) { return fits(w, a); }); })) out.push([m.index, m.index + m[0].length]);
+      }
+      return out;
+    };
+  }
+
+  function render() {
+    resBox.innerHTML = '';
+    sel = -1;
+    if (!found.length) return;
+    var head = document.createElement('div');
+    head.className = 'results-title'; head.textContent = 'Разделы';
+    resBox.appendChild(head);
+    found.forEach(function (r, i) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'result';
+      var t = document.createElement('span'); t.className = 'r-title'; t.textContent = r.s.title;
+      b.appendChild(t);
+      if (r.s.crumbs.length) {
+        var c = document.createElement('span'); c.className = 'r-crumbs';
+        c.textContent = (r.s.crumbs.length > 2 ? '… › ' : '') + r.s.crumbs.slice(-2).join(' › ');
+        b.appendChild(c);
+      }
+      b.onclick = function () { openResult(i); };
+      resBox.appendChild(b);
+    });
+  }
+  function openResult(i) {
+    var r = found[i];
+    if (!r) return;
+    clear();
+    mark(r.s.els, wordRanges(r.terms));
+    document.documentElement.style.scrollBehavior = 'auto';
+    r.s.h.scrollIntoView({ block: 'start' });
+    document.documentElement.style.scrollBehavior = '';
+    history.replaceState(null, '', location.href.split('#')[0] + '#' + r.s.h.id);
+    r.s.h.classList.remove('flash'); void r.s.h.offsetWidth; r.s.h.classList.add('flash');
+    info.classList.remove('on');
+    closeNav();
+  }
   function run() {
     clear();
     var term = q.value.trim().toLowerCase();
-    if (term.length < 2) { info.classList.remove('on'); return; }
-    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null), nodes = [], n;
-    while ((n = walker.nextNode())) {
-      if (n.parentElement.closest('.mp-hidden')) continue;  // скрыто фильтром маркетплейса
-      if (n.nodeValue.toLowerCase().indexOf(term) >= 0) nodes.push(n);
-    }
-    nodes.forEach(function (node) {
-      var text = node.nodeValue, lower = text.toLowerCase(), frag = document.createDocumentFragment(), i = 0, j;
-      while ((j = lower.indexOf(term, i)) >= 0) {
-        frag.appendChild(document.createTextNode(text.slice(i, j)));
-        var m = document.createElement('mark'); m.className = 'hit'; m.textContent = text.slice(j, j + term.length);
-        frag.appendChild(m); hits.push(m); i = j + term.length;
-      }
-      frag.appendChild(document.createTextNode(text.slice(i)));
-      node.parentNode.replaceChild(frag, node);
-    });
+    if (term.length < 2) { found = []; render(); info.classList.remove('on'); return; }
+    found = smart(term);
+    render();
+    mark([content], phraseRanges(term));
     info.classList.add('on');
-    if (!hits.length) { cnt.textContent = 'Ничего не найдено'; return; }
-    go(0);
+    if (hits.length) cnt.textContent = 'Точных совпадений в тексте: ' + hits.length;
+    else cnt.textContent = found.length ? 'Точных совпадений в тексте нет' : 'Ничего не найдено';
+    document.getElementById('qPrev').hidden = document.getElementById('qNext').hidden = !hits.length;
   }
   function go(i) {
     if (!hits.length) return;
@@ -541,10 +710,26 @@ mark.hit.current { outline: 2px solid var(--accent); }
     pos = (i + hits.length) % hits.length;
     hits[pos].classList.add('current');
     hits[pos].scrollIntoView({ block: 'center' });
-    cnt.textContent = (pos + 1) + ' из ' + hits.length;
+    cnt.textContent = 'Совпадение ' + (pos + 1) + ' из ' + hits.length;
+  }
+  function choose(i) {
+    var items = resBox.querySelectorAll('.result');
+    items.forEach(function (b, k) { b.classList.toggle('sel', k === i); });
+    if (items[i]) items[i].scrollIntoView({ block: 'nearest' });
+    sel = i;
   }
   q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 250); });
-  q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(pos + (e.shiftKey ? -1 : 1)); } });
+  q.addEventListener('keydown', function (e) {
+    var n = found.length;
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); choose((sel + 1) % n); }
+    else if (e.key === 'ArrowUp' && n) { e.preventDefault(); choose((sel - 1 + n) % n); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(timer);
+      if (!found.length && q.value.trim().length >= 2) run();
+      if (found.length) openResult(sel >= 0 ? sel : 0); else go(pos + (e.shiftKey ? -1 : 1));
+    }
+  });
   document.getElementById('qNext').onclick = function () { go(pos + 1); };
   document.getElementById('qPrev').onclick = function () { go(pos - 1); };
 })();

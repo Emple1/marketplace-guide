@@ -123,7 +123,7 @@ def text_of(tag):
     return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
 
 
-def postprocess(fragment, own_doc_id=None):
+def postprocess(fragment, own_doc_id=None, support_url=None):
     soup = BeautifulSoup(fragment, "html.parser")
 
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
@@ -312,8 +312,36 @@ def postprocess(fragment, own_doc_id=None):
             a["rel"] = "noopener"
 
     remove_marketplace_lists(soup)
+    if support_url:
+        link_support(soup, support_url)
     tag_marketplaces(soup)
     return str(soup)
+
+
+# «обратитесь в службу поддержки», «заявки на техподдержку» … — ссылкой делаем слова про поддержку
+SUPPORT_RE = re.compile(r"(?:обрат\w*\s+в\s+(?:нашу\s+)?|заявк\w*\s+на\s+)"
+                        r"(службу\s+поддержки|техническую\s+поддержку|техподдержку|поддержку)", re.I)
+
+
+def link_support(soup, url):
+    """Упоминания обращения в техподдержку → ссылка на личный кабинет техподдержки."""
+    count = 0
+    for node in list(soup.find_all(string=SUPPORT_RE)):
+        if node.find_parent("a") is not None:
+            continue
+        text, pos, parts = str(node), 0, []
+        for m in SUPPORT_RE.finditer(text):
+            parts.append(NavigableString(text[pos:m.start(1)]))
+            a = soup.new_tag("a", href=url, target="_blank", rel="noopener")
+            a.string = m.group(1)
+            parts.append(a)
+            pos = m.end(1)
+            count += 1
+        parts.append(NavigableString(text[pos:]))
+        for part in parts:
+            node.insert_before(part)
+        node.extract()
+    print(f"  · ссылок на техподдержку: {count}")
 
 
 def is_marketplace_line(el):
@@ -365,6 +393,14 @@ def tag_marketplaces(soup):
                 mps = own
         if mps:
             el["data-mp"] = " ".join(mps)
+
+
+def footer_html(cfg):
+    text = html.escape(cfg.get("footer", ""))
+    url = cfg.get("support_url")
+    if url and "техподдержк" in text:
+        text = text.replace("техподдержку", f'<a href="{html.escape(url)}" target="_blank" rel="noopener">техподдержку</a>', 1)
+    return text
 
 
 def logo_html(cfg):
@@ -459,7 +495,7 @@ def main():
     for msg in result.messages:
         if "Unrecognised paragraph style" not in msg.message:
             print("  ·", msg.message)
-    content = postprocess(result.value, doc_id(cfg.get("google_doc", "")))
+    content = postprocess(result.value, doc_id(cfg.get("google_doc", "")), cfg.get("support_url"))
 
     DIST.mkdir(exist_ok=True)
     name = cfg["file_name"]
@@ -481,7 +517,8 @@ def main():
         "VERSION": html.escape(str(cfg.get("version", "1.0"))),
         "BUILD_DATE": today,
         "ACCENT": cfg.get("accent", "#2563eb"),
-        "FOOTER": html.escape(cfg.get("footer", "")),
+        "FOOTER": footer_html(cfg),
+        "HOME_URL": html.escape(cfg.get("home_url") or "#"),
         "LOGO": logo_html(cfg),
         "DOCX_NAME": html.escape(docx_name),
         "DOCX_HREF": html.escape(docx_href),
