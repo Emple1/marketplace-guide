@@ -1,3 +1,4 @@
 mammoth
 requests
 beautifulsoup4
+pillow

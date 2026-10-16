@@ -40,7 +40,7 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+html { scroll-behavior: smooth; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 16px/1.65 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -127,6 +127,7 @@ body {
   margin-left: 8px; color: var(--muted); text-decoration: none; opacity: 0; font-weight: 400;
 }
 .content :is(h1,h2,h3):hover .anchor { opacity: 1; }
+.content { overflow-wrap: anywhere; }
 .content p { margin: 0 0 14px; }
 .content a { color: var(--accent); }
 .content ul, .content ol { padding-left: 26px; margin: 0 0 14px; }
@@ -151,6 +152,9 @@ body {
 .content td p, .content th p { margin: 0 0 6px; }
 .content td p:last-child, .content th p:last-child { margin: 0; }
 .content td img { box-shadow: none; }
+.content img[data-media] { background: var(--code-bg); }
+.content h5, .content h6 { font-size: 15px; margin: 18px 0 6px; }
+.notice { margin: 0 0 20px; padding: 12px 16px; border-radius: 10px; background: var(--warn-bg); border: 1px solid var(--warn); font-size: 14px; }
 
 .callout {
   display: flex; gap: 12px; margin: 18px 0; padding: 14px 16px; border-radius: 12px;
@@ -265,6 +269,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
           <span class="chip">Обновлено {{BUILD_DATE}}</span>
         </div>
       </div>
+      <div class="notice" id="oldBrowser" hidden>Браузер устарел и не может показать скриншоты. Откройте инструкцию в свежем Chrome, Edge, Firefox или Яндекс Браузере — или нажмите «Скачать Word».</div>
       <div class="content" id="content">
 {{CONTENT}}
       </div>
@@ -297,20 +302,63 @@ mark.hit.current { outline: 2px solid var(--accent); }
   };
   document.getElementById('printBtn').onclick = function () { window.print(); };
 
-  /* Word: встроенный .docx отдаём как Blob */
-  var data = document.getElementById('docx-data');
+  /* Встроенный .docx: кнопка «Скачать Word» и картинки страницы (берутся прямо из него) */
+  var data = document.getElementById('docx-data'), docx = null;
+  function docxBytes() {
+    if (!docx) {
+      var bin = atob(data.textContent.trim());
+      docx = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) docx[i] = bin.charCodeAt(i);
+    }
+    return docx;
+  }
   if (data) {
     document.getElementById('wordBtn').addEventListener('click', function (e) {
       e.preventDefault();
-      var bin = atob(data.textContent.trim()), bytes = new Uint8Array(bin.length);
-      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      var blob = new Blob([docxBytes()], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
       var url = URL.createObjectURL(blob), a = document.createElement('a');
       a.href = url; a.download = this.getAttribute('download');
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
     });
   }
+
+  var MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp' };
+  async function loadMedia() {
+    var imgs = content.querySelectorAll('img[data-media]');
+    if (!imgs.length || !data) return;
+    if (!('DecompressionStream' in window)) {
+      document.getElementById('oldBrowser').hidden = false;
+      return;
+    }
+    var bytes = docxBytes(), dv = new DataView(bytes.buffer), dec = new TextDecoder();
+    // Оглавление zip-архива (.docx — это zip)
+    var e = bytes.length - 22;
+    while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+    var count = dv.getUint16(e + 10, true), off = dv.getUint32(e + 16, true), entries = {};
+    for (var i = 0; i < count; i++) {
+      var nl = dv.getUint16(off + 28, true), el = dv.getUint16(off + 30, true), cl = dv.getUint16(off + 32, true);
+      entries[dec.decode(bytes.subarray(off + 46, off + 46 + nl))] = {
+        method: dv.getUint16(off + 10, true), size: dv.getUint32(off + 20, true), local: dv.getUint32(off + 42, true)
+      };
+      off += 46 + nl + el + cl;
+    }
+    var byName = {};
+    imgs.forEach(function (img) { (byName[img.dataset.media] = byName[img.dataset.media] || []).push(img); });
+    for (var name in byName) {
+      var en = entries[name];
+      if (!en) continue;
+      var start = en.local + 30 + dv.getUint16(en.local + 26, true) + dv.getUint16(en.local + 28, true);
+      var raw = bytes.subarray(start, start + en.size), body;
+      try {
+        body = en.method === 0 ? raw : await new Response(
+          new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      } catch (err) { continue; }
+      var url = URL.createObjectURL(new Blob([body], { type: MIME[name.split('.').pop().toLowerCase()] || 'image/png' }));
+      byName[name].forEach(function (img) { img.src = url; img.removeAttribute('data-media'); });
+    }
+  }
+  setTimeout(loadMedia, 0);
 
   /* Оглавление + подсветка текущего раздела */
   var heads = content.querySelectorAll('h1[id], h2[id], h3[id]');

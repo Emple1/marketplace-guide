@@ -7,23 +7,29 @@
     python build.py                    # скачать Google Doc по ссылке из config.json
     python build.py путь/к/файлу.docx  # собрать из вручную скачанного .docx
     python build.py --separate-docx    # не встраивать .docx в HTML, положить рядом
+    python build.py --no-compress      # не сжимать скриншоты
 """
 import argparse
 import base64
 import datetime
+import hashlib
 import html
+import io
 import json
 import re
 import sys
+import zipfile
 from pathlib import Path
 
 import mammoth
 import requests
 from bs4 import BeautifulSoup, NavigableString
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
-EMBED_LIMIT_MB = 25  # больше — .docx кладём рядом, иначе HTML станет неподъёмным
+EMBED_LIMIT_MB = 40  # больше — .docx кладём рядом, иначе HTML станет неподъёмным
+MAX_SIDE = 2000      # максимальная сторона скриншота, px
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -75,7 +81,7 @@ def download_google_doc(doc):
 
 def slugify(text, used):
     s = re.sub(r"[^\w\s-]", "", text.lower(), flags=re.U)
-    s = re.sub(r"[\s_]+", "-", s).strip("-")[:60] or "razdel"
+    s = re.sub(r"[\s_-]+", "-", s).strip("-")[:60].strip("-") or "razdel"
     base, n = s, 2
     while s in used:
         s, n = f"{base}-{n}", n + 1
@@ -93,26 +99,57 @@ def postprocess(fragment):
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
     for t in soup.select("h1.doc-title, p.doc-subtitle"):
         t.decompose()
+    # Титульный лист (всё до первого заголовка) — тоже, название уже в шапке
+    first = soup.find(["h1", "h2", "h3"])
+    if first is not None:
+        for el in list(first.find_previous_siblings()):
+            el.decompose()
 
     # Пустые абзацы, которые Google Docs оставляет между блоками
     for p in soup.find_all("p"):
         if not text_of(p) and not p.find("img"):
             p.decompose()
 
+    # Ручное «Содержание» из документа не нужно — на странице есть боковое оглавление
+    for h in soup.find_all("h1"):
+        if text_of(h).lower() in ("содержание", "оглавление"):
+            nxt = h.find_next_sibling()
+            while nxt is not None and nxt.name != "h1":
+                cur, nxt = nxt, nxt.find_next_sibling()
+                cur.decompose()
+            h.decompose()
+
     # Заголовки: якоря для оглавления и ссылок «на раздел»
-    used = set()
-    for h in soup.find_all(["h1", "h2", "h3", "h4"]):
+    used, aliases, orphans = set(), {}, []
+    for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         title = text_of(h)
+        bookmarks = [a["id"] for a in h.find_all("a", href=False) if a.get("id")]  # закладки Google Docs
         if not title:
+            orphans += bookmarks  # закладка пустого заголовка ведёт на следующий
             h.decompose()
             continue
-        for a in h.find_all("a", href=False):  # закладки Google Docs (<a id=...>)
-            a.unwrap()
         h["id"] = slugify(title, used)
+        for b in bookmarks + orphans:
+            aliases[b] = h["id"]
+        orphans = []
+        for a in h.find_all("a", href=False):
+            a.unwrap()
         h["data-title"] = title
         anchor = soup.new_tag("a", attrs={"class": "anchor", "href": f"#{h['id']}", "aria-hidden": "true"})
         anchor.string = "#"
         h.append(anchor)
+
+    # Внутренние ссылки документа («см. раздел …») ведут на новые якоря заголовков
+    ids = {t["id"] for t in soup.find_all(id=True)}
+    for a in soup.find_all("a", href=True):
+        if not a["href"].startswith("#"):
+            continue
+        target = aliases.get(a["href"][1:], a["href"][1:])
+        if target in ids:
+            a["href"] = "#" + target
+        else:
+            print(f"  · битая ссылка в документе: «{text_of(a)[:70]}» — раздел, на который она ведёт, удалён")
+            a.unwrap()
 
     # Абзацы только из картинок → <figure>, следующая строка «Рис. …» → подпись
     for p in soup.find_all("p"):
@@ -191,10 +228,45 @@ def logo_html(cfg):
     return f'<span class="badge-logo">{letter}</span>'
 
 
+def optimize_docx(docx_bytes):
+    """Сжимает скриншоты внутри .docx без видимой потери качества.
+
+    PNG → палитра 256 цветов (для скриншотов 1С разницы не видно, вес в 3–4 раза меньше),
+    слишком большие картинки уменьшаются до MAX_SIDE. Размер картинок на странице Word
+    задаётся в разметке документа, поэтому вёрстка Word не меняется.
+    """
+    src = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            data = src.read(info)
+            if info.filename.startswith("word/media/") and info.filename.lower().endswith(".png"):
+                try:
+                    im = Image.open(io.BytesIO(data))
+                    im = im.convert("RGBA") if im.mode in ("P", "LA", "RGBA", "PA") else im.convert("RGB")
+                    if max(im.size) > MAX_SIDE:
+                        im.thumbnail((MAX_SIDE, MAX_SIDE))
+                    buf = io.BytesIO()
+                    im.quantize(256, method=Image.Quantize.FASTOCTREE).save(buf, format="PNG", optimize=True)
+                    if buf.tell() < len(data):
+                        data = buf.getvalue()
+                except Exception as e:  # битая картинка — оставляем как есть
+                    print(f"  · не удалось сжать {info.filename}: {e}")
+            dst.writestr(info, data)
+    return out.getvalue()
+
+
+def media_index(docx_bytes):
+    """Хэш содержимого картинки → её путь внутри .docx (word/media/imageN.png)."""
+    z = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    return {hashlib.sha1(z.read(n)).hexdigest(): n for n in z.namelist() if n.startswith("word/media/")}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Сборка HTML + Word из Google Doc")
     ap.add_argument("docx", nargs="?", help="путь к .docx (иначе скачать Google Doc из config.json)")
     ap.add_argument("--separate-docx", action="store_true", help="положить .docx рядом, а не внутрь HTML")
+    ap.add_argument("--no-compress", action="store_true", help="не сжимать скриншоты")
     args = ap.parse_args()
     cfg = load_config()
 
@@ -205,8 +277,36 @@ def main():
     else:
         sys.exit("Укажите ссылку на Google Doc в config.json (поле google_doc) или передайте путь к .docx")
 
-    import io
-    result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=STYLE_MAP)
+    if not args.no_compress:
+        before = len(docx_bytes)
+        print("Сжимаю скриншоты …")
+        docx_bytes = optimize_docx(docx_bytes)
+        print(f"  {before / 2**20:.1f} МБ → {len(docx_bytes) / 2**20:.1f} МБ")
+
+    size_mb = len(docx_bytes) / 2**20
+    embed = not args.separate_docx and size_mb <= EMBED_LIMIT_MB
+
+    # Если .docx встроен в страницу, картинки не дублируем: браузер достаёт их из него сам
+    media = media_index(docx_bytes) if embed else {}
+
+    def convert_image(image):
+        with image.open() as f:
+            data = f.read()
+        attrs = {"alt": image.alt_text or ""}
+        try:  # размеры заранее — чтобы страница не «прыгала», пока грузятся картинки
+            attrs["width"], attrs["height"] = (str(v) for v in Image.open(io.BytesIO(data)).size)
+        except Exception:
+            pass
+        path = media.get(hashlib.sha1(data).hexdigest())
+        if path:
+            attrs["data-media"] = path
+        else:
+            attrs["src"] = f"data:{image.content_type};base64,{base64.b64encode(data).decode()}"
+        return attrs
+
+    print("Превращаю в HTML …")
+    result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=STYLE_MAP,
+                                     convert_image=mammoth.images.img_element(convert_image))
     for msg in result.messages:
         if "Unrecognised paragraph style" not in msg.message:
             print("  ·", msg.message)
@@ -217,8 +317,6 @@ def main():
     docx_name = f"{name}.docx"
     (DIST / docx_name).write_bytes(docx_bytes)
 
-    size_mb = len(docx_bytes) / 2**20
-    embed = not args.separate_docx and size_mb <= EMBED_LIMIT_MB
     if embed:
         docx_href = "#"
         docx_data = ('<script type="application/octet-stream" id="docx-data">'
