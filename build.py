@@ -131,6 +131,13 @@ def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=(), matri
     soup = BeautifulSoup(fragment, "html.parser")
     matrix = read_feature_matrix(soup, matrix_sheet)
 
+    # Фоновые подложки страниц из документа (жёлтые ромбы на весь лист) — не скриншоты
+    bg = soup.select("img[data-bg]")
+    for img in bg:
+        img.decompose()
+    if bg:
+        print(f"  · убрано фоновых подложек страниц: {len(bg)}")
+
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
     for t in soup.select("h1.doc-title, p.doc-subtitle"):
         t.decompose()
@@ -611,6 +618,23 @@ def strip_matrix_from_docx(docx_bytes):
     return out.getvalue()
 
 
+def background_media(docx_bytes):
+    """Картинки, вставленные в документ «за текстом» (фоновые подложки страниц), — на сайте не нужны."""
+    z = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    doc = z.read("word/document.xml").decode("utf-8")
+    rels = z.read("word/_rels/document.xml.rels").decode("utf-8")
+    targets = {}
+    for m in re.finditer(r"<Relationship\b[^>]*>", rels):
+        rid, tgt = re.search(r'Id="([^"]+)"', m.group(0)), re.search(r'Target="([^"]+)"', m.group(0))
+        if rid and tgt:
+            targets[rid.group(1)] = "word/" + tgt.group(1).lstrip("/").removeprefix("word/")
+    found = set()
+    for attrs, body in re.findall(r"<wp:anchor\b([^>]*)>(.*?)</wp:anchor>", doc, re.S):
+        if re.search(r'behindDoc="(1|true)"', attrs):
+            found |= {targets[e] for e in re.findall(r'r:embed="([^"]+)"', body) if e in targets}
+    return found
+
+
 def media_index(docx_bytes):
     """Хэш содержимого картинки → её путь внутри .docx (word/media/imageN.png)."""
     z = zipfile.ZipFile(io.BytesIO(docx_bytes))
@@ -648,6 +672,7 @@ def main():
     # Картинки помечаем путём внутри .docx: в однофайловой версии браузер достаёт их из встроенного
     # .docx, в версии для сайта они лежат отдельными файлами
     media = media_index(docx_bytes)
+    backgrounds = background_media(source_bytes)
 
     def convert_image(image):
         with image.open() as f:
@@ -658,6 +683,8 @@ def main():
         except Exception:
             pass
         path = media.get(hashlib.sha1(data).hexdigest())
+        if path in backgrounds:  # фоновая подложка страницы — уберём при постобработке
+            return {"data-bg": "1"}
         if path:
             attrs["data-media"] = path
         else:
