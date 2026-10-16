@@ -55,7 +55,7 @@ body {
   backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; }
-.brand img { height: 30px; width: auto; }
+.brand img { height: 46px; width: auto; }
 .brand .badge-logo {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
   display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 15px;
@@ -264,10 +264,6 @@ mark.hit.current { outline: 2px solid var(--accent); }
       <div class="hero">
         <div class="kicker">{{KICKER}}</div>
         <h1>{{TITLE}}</h1>
-        <div class="meta">
-          <span class="chip">Версия {{VERSION}}</span>
-          <span class="chip">Обновлено {{BUILD_DATE}}</span>
-        </div>
       </div>
       <div class="notice" id="oldBrowser" hidden>Браузер устарел и не может показать скриншоты. Откройте инструкцию в свежем Chrome, Edge, Firefox или Яндекс Браузере — или нажмите «Скачать Word».</div>
       <div class="content" id="content">
