@@ -17,6 +17,7 @@ import html
 import io
 import json
 import re
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -30,6 +31,8 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 EMBED_LIMIT_MB = 40  # больше — .docx кладём рядом, иначе HTML станет неподъёмным
 MAX_SIDE = 2000      # максимальная сторона скриншота, px
+WEB_DOCX = "instrukciya.docx"  # имя .docx на сайте (латиницей — надёжнее в адресе)
+MEDIA_ATTR = re.compile(r'data-media="([^"]+)"')
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -476,8 +479,9 @@ def main():
     size_mb = len(docx_bytes) / 2**20
     embed = not args.separate_docx and size_mb <= EMBED_LIMIT_MB
 
-    # Если .docx встроен в страницу, картинки не дублируем: браузер достаёт их из него сам
-    media = media_index(docx_bytes) if embed else {}
+    # Картинки помечаем путём внутри .docx: в однофайловой версии браузер достаёт их из встроенного
+    # .docx, в версии для сайта они лежат отдельными файлами
+    media = media_index(docx_bytes)
 
     def convert_image(image):
         with image.open() as f:
@@ -507,15 +511,51 @@ def main():
     name = cfg["file_name"]
     docx_name = f"{name}.docx"
     (DIST / docx_name).write_bytes(docx_bytes)
+    zf = zipfile.ZipFile(io.BytesIO(docx_bytes))
+    today = datetime.date.today().strftime("%d.%m.%Y")
+    stats = {"headings": content.count("<h1") + content.count("<h2") + content.count("<h3"),
+             "images": content.count("<img"), "built": today}
 
+    # 1) Один файл — для отправки вручную: .docx встроен, картинки браузер достаёт из него
     if embed:
+        single = content
         docx_href = "#"
         docx_data = ('<script type="application/octet-stream" id="docx-data">'
                      + base64.b64encode(docx_bytes).decode() + "</script>")
     else:
+        def inline(m):
+            data = zf.read(m.group(1))
+            mime = Image.MIME.get(Image.open(io.BytesIO(data)).format, "image/png")
+            return f'src="data:{mime};base64,{base64.b64encode(data).decode()}"'
+        single = MEDIA_ATTR.sub(inline, content)
         docx_href, docx_data = docx_name, ""
+    out = DIST / f"{name}.html"
+    out.write_text(render_page(cfg, single, today, docx_name, docx_href, docx_data), encoding="utf-8")
+    (DIST / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
 
-    today = datetime.date.today().strftime("%d.%m.%Y")
+    # 2) Версия для сайта: лёгкая страница, скриншоты отдельными файлами (грузятся по мере
+    #    прокрутки), Word скачивается по кнопке отдельным файлом
+    web = DIST / "web"
+    shutil.rmtree(web, ignore_errors=True)
+    (web / "img").mkdir(parents=True)
+    used = set(MEDIA_ATTR.findall(content))
+    for path in used:
+        (web / "img" / Path(path).name).write_bytes(zf.read(path))
+    web_content = MEDIA_ATTR.sub(lambda m: f'src="img/{Path(m.group(1)).name}"', content)
+    web_content = re.sub(r'<img (?![^>]*loading=)', '<img loading="lazy" ', web_content)
+    (web / WEB_DOCX).write_bytes(docx_bytes)
+    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, ""),
+                                    encoding="utf-8")
+    (web / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
+
+    print(f"Готово: {out}  ({out.stat().st_size / 2**20:.1f} МБ)")
+    print(f"        {DIST / docx_name}  ({size_mb:.1f} МБ)"
+          + ("" if embed else "  ← отправляйте клиенту вместе с HTML"))
+    print(f"        {web}  (для сайта: страница {(web / 'index.html').stat().st_size / 2**20:.1f} МБ"
+          f" + {len(used)} картинок)")
+
+
+def render_page(cfg, content, today, docx_name, docx_href, docx_data):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     for key, value in {
         "TITLE": html.escape(cfg["title"]),
@@ -531,18 +571,7 @@ def main():
     }.items():
         page = page.replace("{{" + key + "}}", value)
     # Содержимое подставляем последним, чтобы случайные {{…}} в тексте не трогать
-    page = page.replace("{{DOCX_DATA}}", docx_data).replace("{{CONTENT}}", content)
-
-    out = DIST / f"{name}.html"
-    out.write_text(page, encoding="utf-8")
-    # Сводка для проверки перед публикацией: не пропала ли половина документа
-    stats = {"headings": content.count("<h1") + content.count("<h2") + content.count("<h3"),
-             "images": content.count("<img"), "built": today}
-    (DIST / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
-    print(f"Готово: {out}  ({out.stat().st_size / 2**20:.1f} МБ)")
-    print(f"        {DIST / docx_name}  ({size_mb:.1f} МБ)"
-          + ("" if embed else "  ← отправляйте клиенту вместе с HTML"))
-
+    return page.replace("{{DOCX_DATA}}", docx_data).replace("{{CONTENT}}", content)
 
 if __name__ == "__main__":
     main()

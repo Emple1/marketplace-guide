@@ -37,9 +37,6 @@ if old and not force:
                      "Если так и задумано, запустите публикацию вручную с галочкой «force».")
             sys.exit(1)
 
-SITE.mkdir(exist_ok=True)
-html = next(DIST.glob("*.html"))
-shutil.copy(html, SITE / "index.html")
-shutil.copy(next(DIST.glob("*.docx")), SITE / html.with_suffix(".docx").name)
-shutil.copy(DIST / "stats.json", SITE / "stats.json")
-print("Папка сайта готова:", ", ".join(p.name for p in SITE.iterdir()))
+shutil.rmtree(SITE, ignore_errors=True)
+shutil.copytree(DIST / "web", SITE)
+print("Папка сайта готова:", len(list(SITE.rglob("*"))), "файлов")
