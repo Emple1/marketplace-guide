@@ -541,8 +541,9 @@ def main():
     used = set(MEDIA_ATTR.findall(content))
     for path in used:
         (web / "img" / Path(path).name).write_bytes(zf.read(path))
-    web_content = MEDIA_ATTR.sub(lambda m: f'src="img/{Path(m.group(1)).name}"', content)
-    web_content = re.sub(r'<img (?![^>]*loading=)', '<img loading="lazy" ', web_content)
+    # data-src: картинку подставляет скрипт страницы заранее, за пару экранов до того, как до неё долистают
+    web_content = MEDIA_ATTR.sub(lambda m: f'data-src="img/{Path(m.group(1)).name}"', content)
+    web_content = web_content.replace(' loading="lazy"', '')
     (web / WEB_DOCX).write_bytes(docx_bytes)
     (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, ""),
                                     encoding="utf-8")
