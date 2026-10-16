@@ -127,9 +127,9 @@ def text_of(tag):
     return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
 
 
-def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=()):
+def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=(), matrix_sheet=None):
     soup = BeautifulSoup(fragment, "html.parser")
-    matrix = read_feature_matrix(soup)
+    matrix = read_feature_matrix(soup, matrix_sheet)
 
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
     for t in soup.select("h1.doc-title, p.doc-subtitle"):
@@ -424,12 +424,35 @@ def load_matrix_file():
     return matrix
 
 
-def read_feature_matrix(soup):
-    """Матрица функционала: matrix.csv + (запасной вариант) таблица «Функционал по маркетплейсам» в документе.
+def load_matrix_sheet(url):
+    """Матрица функционала из Google Таблицы (её заполняют коллеги; нужен доступ «все, у кого есть ссылка»)."""
+    m = re.search(r"/spreadsheets/d/([\w-]+)", url)
+    if not m:
+        print(f"  · ВНИМАНИЕ: не понял ссылку на таблицу матрицы: {url}")
+        return {}
+    gid = re.search(r"[#&?]gid=(\d+)", url)
+    export = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv&gid={gid.group(1) if gid else 0}"
+    try:
+        r = requests.get(export, timeout=60)
+        ok = r.status_code == 200 and "text/html" not in r.headers.get("Content-Type", "")
+    except requests.RequestException:
+        ok = False
+    if not ok:
+        print("  · ВНИМАНИЕ: не удалось скачать Google Таблицу матрицы (закрыт доступ по ссылке?) — беру matrix.csv")
+        return {}
+    rows = [row for row in csv.reader(io.StringIO(r.content.decode("utf-8-sig"))) if any(c.strip() for c in row)]
+    matrix = parse_matrix(rows)
+    print(f"  · матрица функционала (Google Таблица): {len(matrix)} строк")
+    return matrix
+
+
+def read_feature_matrix(soup, sheet_url=None):
+    """Матрица функционала: Google Таблица (если указана в config.json → matrix_sheet), иначе matrix.csv;
+    плюс запасной вариант — таблица «Функционал по маркетплейсам» в самом документе.
 
     Таблица из документа нужна только фильтру: её раздел убирается со страницы. Строки из документа
-    дополняют/переопределяют строки файла."""
-    matrix = load_matrix_file()
+    дополняют/переопределяют остальные."""
+    matrix = (load_matrix_sheet(sheet_url) if sheet_url else {}) or load_matrix_file()
     levels = ["h1", "h2", "h3", "h4", "h5", "h6"]
     head = next((h for h in soup.find_all(levels) if MATRIX_TITLE in text_of(h).lower()), None)
     if head is None:
@@ -647,7 +670,7 @@ def main():
         if "Unrecognised paragraph style" not in msg.message:
             print("  ·", msg.message)
     content = postprocess(result.value, doc_id(cfg.get("google_doc", "")), cfg.get("support_url"),
-                          cfg.get("collapsed", []))
+                          cfg.get("collapsed", []), cfg.get("matrix_sheet"))
 
     DIST.mkdir(exist_ok=True)
     name = cfg["file_name"]
