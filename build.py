@@ -79,6 +79,11 @@ def download_google_doc(doc):
     return r.content
 
 
+def doc_id(doc):
+    m = re.search(r"/document/d/([\w-]+)", doc)
+    return m.group(1) if m else doc.strip()
+
+
 def slugify(text, used):
     s = re.sub(r"[^\w\s-]", "", text.lower(), flags=re.U)
     s = re.sub(r"[\s_-]+", "-", s).strip("-")[:60].strip("-") or "razdel"
@@ -97,7 +102,7 @@ def text_of(tag):
     return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
 
 
-def postprocess(fragment):
+def postprocess(fragment, own_doc_id=None):
     soup = BeautifulSoup(fragment, "html.parser")
 
     # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
@@ -159,6 +164,23 @@ def postprocess(fragment):
     # Внутренние ссылки документа («см. раздел …») ведут на новые якоря заголовков
     ids = {t["id"] for t in soup.find_all(id=True)}
 
+    # Ссылки на этот же Google Doc («…/document/d/<id>/…#heading=h.xxx») уводили бы клиента
+    # в исходник — превращаем их во внутренние ссылки на раздел инструкции
+    if own_doc_id:
+        for a in soup.find_all("a", href=lambda h: h and own_doc_id in h):
+            m = re.search(r"#(?:heading=)?(h\.[\w-]+)", a["href"])
+            if m:
+                a["href"] = "#_heading=" + m.group(1)
+                continue
+            # Ссылка на документ целиком: убираем вместе с текстом-адресом
+            parent = a.parent
+            if text_of(a).startswith("http"):
+                a.decompose()
+            else:
+                a.unwrap()
+            if parent is not None and parent.name == "p" and len(text_of(parent)) < 80 and not parent.find("img"):
+                parent.decompose()
+
     def norm(t):
         return re.sub(r"[\W_]+", " ", re.sub(r"\s\d+$", "", t)).strip().lower()
 
@@ -167,7 +189,17 @@ def postprocess(fragment):
         want = norm(text_of(a))
         if not want:
             return None
-        for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        levels = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        below = [h for h in a.find_all_next(levels, limit=30) if h.get("id")]
+        # 1) ближайший заголовок ниже с точно таким названием, 2) ниже — начинающийся с него
+        #    («Wildberries» → «Wildberries - Настройка профиля»), 3) такой же в любом месте
+        for h in below:
+            if norm(h.get("data-title", "")) == want:
+                return h["id"]
+        for h in below:
+            if norm(h.get("data-title", "")).startswith(want + " "):
+                return h["id"]
+        for h in soup.find_all(levels):
             if h.get("id") and norm(h.get("data-title", "")) == want:
                 return h["id"]
         for p in soup.find_all("p"):
@@ -352,7 +384,7 @@ def main():
     for msg in result.messages:
         if "Unrecognised paragraph style" not in msg.message:
             print("  ·", msg.message)
-    content = postprocess(result.value)
+    content = postprocess(result.value, doc_id(cfg.get("google_doc", "")))
 
     DIST.mkdir(exist_ok=True)
     name = cfg["file_name"]
