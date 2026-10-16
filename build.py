@@ -178,7 +178,7 @@ def postprocess(fragment, own_doc_id=None):
                 a.decompose()
             else:
                 a.unwrap()
-            if parent is not None and parent.name == "p" and len(text_of(parent)) < 80 and not parent.find("img"):
+            if parent is not None and parent.name in ("p", "li") and len(text_of(parent)) < 80 and not parent.find("img"):
                 parent.decompose()
 
     def norm(t):
