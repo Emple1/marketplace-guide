@@ -1,0 +1,254 @@
+"""Сборка инструкции по модулю маркетплейсов.
+
+Источник правды — общий Google Doc. Скрипт скачивает его в формате Word (.docx),
+превращает в оформленный HTML и встраивает туда же .docx для кнопки «Скачать Word».
+
+Запуск:
+    python build.py                    # скачать Google Doc по ссылке из config.json
+    python build.py путь/к/файлу.docx  # собрать из вручную скачанного .docx
+    python build.py --separate-docx    # не встраивать .docx в HTML, положить рядом
+"""
+import argparse
+import base64
+import datetime
+import html
+import json
+import re
+import sys
+from pathlib import Path
+
+import mammoth
+import requests
+from bs4 import BeautifulSoup, NavigableString
+
+ROOT = Path(__file__).resolve().parent
+DIST = ROOT / "dist"
+EMBED_LIMIT_MB = 25  # больше — .docx кладём рядом, иначе HTML станет неподъёмным
+
+sys.stdout.reconfigure(encoding="utf-8")
+
+# Стили Google Docs / Word → HTML
+STYLE_MAP = """
+p[style-name='Title'] => h1.doc-title:fresh
+p[style-name='title'] => h1.doc-title:fresh
+p[style-name='Subtitle'] => p.doc-subtitle:fresh
+p[style-name='subtitle'] => p.doc-subtitle:fresh
+"""
+
+# Абзац, начинающийся с «Слово:», превращается в цветную выноску
+CALLOUTS = {
+    "важно": "warn", "внимание": "warn", "обратите внимание": "warn",
+    "осторожно": "danger", "нельзя": "danger",
+    "совет": "tip", "подсказка": "tip", "лайфхак": "tip",
+    "примечание": "info", "заметка": "info", "информация": "info",
+}
+CALLOUT_RE = re.compile(r"^\s*(" + "|".join(sorted(CALLOUTS, key=len, reverse=True)) + r")\s*[:!]", re.I)
+ICONS = {
+    "warn": '<path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+    "danger": '<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6m0-6 6 6"/>',
+    "tip": '<path d="M9 18h6m-5 3h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>',
+    "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+}
+CAPTION_RE = re.compile(r"^\s*(рис\.|рисунок|скриншот)\s*\d*", re.I)
+
+
+def load_config():
+    return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+
+
+def download_google_doc(doc):
+    """Скачивает Google Doc как .docx. Нужен доступ «Все, у кого есть ссылка» (хотя бы чтение)."""
+    m = re.search(r"/document/d/([\w-]+)", doc)
+    doc_id = m.group(1) if m else doc.strip()
+    url = f"https://docs.google.com/document/d/{doc_id}/export?format=docx"
+    print(f"Скачиваю Google Doc {doc_id} …")
+    r = requests.get(url, timeout=120)
+    if r.status_code != 200 or "text/html" in r.headers.get("Content-Type", ""):
+        sys.exit(
+            "Не удалось скачать документ: у него нет доступа по ссылке.\n"
+            "Либо включите в Google Doc «Настройки доступа → Все, у кого есть ссылка (читатель)»,\n"
+            "либо скачайте вручную «Файл → Скачать → Microsoft Word (.docx)» и запустите:\n"
+            "    python build.py путь/к/файлу.docx"
+        )
+    return r.content
+
+
+def slugify(text, used):
+    s = re.sub(r"[^\w\s-]", "", text.lower(), flags=re.U)
+    s = re.sub(r"[\s_]+", "-", s).strip("-")[:60] or "razdel"
+    base, n = s, 2
+    while s in used:
+        s, n = f"{base}-{n}", n + 1
+    used.add(s)
+    return s
+
+
+def text_of(tag):
+    return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
+
+
+def postprocess(fragment):
+    soup = BeautifulSoup(fragment, "html.parser")
+
+    # Титул и подзаголовок документа показываются в шапке страницы, из текста убираем
+    for t in soup.select("h1.doc-title, p.doc-subtitle"):
+        t.decompose()
+
+    # Пустые абзацы, которые Google Docs оставляет между блоками
+    for p in soup.find_all("p"):
+        if not text_of(p) and not p.find("img"):
+            p.decompose()
+
+    # Заголовки: якоря для оглавления и ссылок «на раздел»
+    used = set()
+    for h in soup.find_all(["h1", "h2", "h3", "h4"]):
+        title = text_of(h)
+        if not title:
+            h.decompose()
+            continue
+        for a in h.find_all("a", href=False):  # закладки Google Docs (<a id=...>)
+            a.unwrap()
+        h["id"] = slugify(title, used)
+        h["data-title"] = title
+        anchor = soup.new_tag("a", attrs={"class": "anchor", "href": f"#{h['id']}", "aria-hidden": "true"})
+        anchor.string = "#"
+        h.append(anchor)
+
+    # Абзацы только из картинок → <figure>, следующая строка «Рис. …» → подпись
+    for p in soup.find_all("p"):
+        imgs = p.find_all("img")
+        if not imgs or text_of(p):
+            continue
+        fig = soup.new_tag("figure")
+        for img in imgs:
+            img["loading"] = "lazy"
+            if not img.get("alt"):
+                img["alt"] = ""
+            fig.append(img.extract())
+        nxt = p.find_next_sibling()
+        if nxt is not None and nxt.name == "p" and not nxt.find("img"):
+            cap = text_of(nxt)
+            whole_italic = nxt.find("em") is not None and text_of(nxt.find("em")) == cap
+            if CAPTION_RE.match(cap) or (whole_italic and len(cap) < 200):
+                fc = soup.new_tag("figcaption")
+                for child in list(nxt.contents):
+                    fc.append(child.extract())
+                fig.append(fc)
+                nxt.decompose()
+        p.replace_with(fig)
+
+    # Выноски «Важно: …», «Совет: …»
+    for p in soup.find_all("p"):
+        if p.find_parent(["table", "figure"]):
+            continue
+        m = CALLOUT_RE.match(text_of(p))
+        if not m:
+            continue
+        kind = CALLOUTS[m.group(1).lower()]
+        if p.find("strong") is None or not text_of(p).startswith(text_of(p.find("strong"))):
+            # Выделяем слово-метку жирным, если автор этого не сделал
+            first = p.contents[0] if p.contents else None
+            if isinstance(first, NavigableString):
+                mm = CALLOUT_RE.match(str(first))
+                if mm:
+                    strong = soup.new_tag("strong")
+                    strong.string = str(first)[: mm.end()]
+                    rest = str(first)[mm.end():]
+                    first.replace_with(strong)
+                    strong.insert_after(NavigableString(rest))
+        box = soup.new_tag("div", attrs={"class": f"callout {kind}"})
+        box.append(BeautifulSoup(
+            f'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round">{ICONS[kind]}</svg>', "html.parser"))
+        body = soup.new_tag("div")
+        p.replace_with(box)
+        body.append(p)
+        box.append(body)
+
+    # Таблицы — с прокруткой на узком экране
+    for table in soup.find_all("table"):
+        if table.find_parent("table"):
+            continue
+        wrap = soup.new_tag("div", attrs={"class": "table-wrap"})
+        table.wrap(wrap)
+
+    # Ссылки наружу — в новой вкладке
+    for a in soup.find_all("a", href=True):
+        if a["href"].startswith("http"):
+            a["target"] = "_blank"
+            a["rel"] = "noopener"
+
+    return str(soup)
+
+
+def logo_html(cfg):
+    path = cfg.get("logo")
+    if path and (ROOT / path).exists():
+        p = ROOT / path
+        mime = {"svg": "image/svg+xml", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(p.suffix[1:].lower(), "image/png")
+        return f'<img src="data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}" alt="">'
+    letter = html.escape((cfg.get("title") or "И")[0])
+    return f'<span class="badge-logo">{letter}</span>'
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Сборка HTML + Word из Google Doc")
+    ap.add_argument("docx", nargs="?", help="путь к .docx (иначе скачать Google Doc из config.json)")
+    ap.add_argument("--separate-docx", action="store_true", help="положить .docx рядом, а не внутрь HTML")
+    args = ap.parse_args()
+    cfg = load_config()
+
+    if args.docx:
+        docx_bytes = Path(args.docx).read_bytes()
+    elif cfg.get("google_doc"):
+        docx_bytes = download_google_doc(cfg["google_doc"])
+    else:
+        sys.exit("Укажите ссылку на Google Doc в config.json (поле google_doc) или передайте путь к .docx")
+
+    import io
+    result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=STYLE_MAP)
+    for msg in result.messages:
+        if "Unrecognised paragraph style" not in msg.message:
+            print("  ·", msg.message)
+    content = postprocess(result.value)
+
+    DIST.mkdir(exist_ok=True)
+    name = cfg["file_name"]
+    docx_name = f"{name}.docx"
+    (DIST / docx_name).write_bytes(docx_bytes)
+
+    size_mb = len(docx_bytes) / 2**20
+    embed = not args.separate_docx and size_mb <= EMBED_LIMIT_MB
+    if embed:
+        docx_href = "#"
+        docx_data = ('<script type="application/octet-stream" id="docx-data">'
+                     + base64.b64encode(docx_bytes).decode() + "</script>")
+    else:
+        docx_href, docx_data = docx_name, ""
+
+    today = datetime.date.today().strftime("%d.%m.%Y")
+    page = (ROOT / "template.html").read_text(encoding="utf-8")
+    for key, value in {
+        "TITLE": html.escape(cfg["title"]),
+        "KICKER": html.escape(cfg.get("kicker", "")),
+        "VERSION": html.escape(str(cfg.get("version", "1.0"))),
+        "BUILD_DATE": today,
+        "ACCENT": cfg.get("accent", "#2563eb"),
+        "FOOTER": html.escape(cfg.get("footer", "")),
+        "LOGO": logo_html(cfg),
+        "DOCX_NAME": html.escape(docx_name),
+        "DOCX_HREF": html.escape(docx_href),
+    }.items():
+        page = page.replace("{{" + key + "}}", value)
+    # Содержимое подставляем последним, чтобы случайные {{…}} в тексте не трогать
+    page = page.replace("{{DOCX_DATA}}", docx_data).replace("{{CONTENT}}", content)
+
+    out = DIST / f"{name}.html"
+    out.write_text(page, encoding="utf-8")
+    print(f"Готово: {out}  ({out.stat().st_size / 2**20:.1f} МБ)")
+    print(f"        {DIST / docx_name}  ({size_mb:.1f} МБ)"
+          + ("" if embed else "  ← отправляйте клиенту вместе с HTML"))
+
+
+if __name__ == "__main__":
+    main()
