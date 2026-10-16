@@ -89,6 +89,10 @@ def slugify(text, used):
     return s
 
 
+def norm_space(t):
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def text_of(tag):
     return re.sub(r"\s+", " ", tag.get_text(" ")).strip()
 
@@ -119,12 +123,18 @@ def postprocess(fragment):
                 cur.decompose()
             h.decompose()
 
-    # «Заголовок», который целиком состоит из ссылки, — это пункт списка вопросов,
-    # случайно оформленный стилем заголовка: делаем его обычным абзацем
+    # «Заголовок», который целиком состоит из ссылок, — это пункты списка вопросов,
+    # случайно оформленные стилем заголовка: делаем каждую ссылку обычным абзацем
     for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         links = h.find_all("a", href=True)
-        if len(links) == 1 and links[0]["href"].startswith("#") and text_of(links[0]) == text_of(h):
-            h.name = "p"
+        if links and norm_space(" ".join(text_of(a) for a in links)) == text_of(h):
+            for a in links:
+                p = soup.new_tag("p")
+                p.append(a.extract())
+                h.insert_before(p)
+            for b in h.find_all("a", id=True):  # закладку заголовка переносим на первый абзац
+                h.find_previous_sibling("p").insert(0, b.extract())
+            h.decompose()
 
     # Заголовки: якоря для оглавления и ссылок «на раздел»
     used, aliases, orphans = set(), {}, []
