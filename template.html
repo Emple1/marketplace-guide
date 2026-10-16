@@ -139,10 +139,20 @@ body {
 .content h2 { font-size: 21px; margin: 36px 0 12px; }
 .content h3 { font-size: 18px; margin: 28px 0 10px; }
 .content h4 { font-size: 16px; margin: 22px 0 8px; }
-.content h1 .anchor, .content h2 .anchor, .content h3 .anchor {
-  margin-left: 8px; color: var(--muted); text-decoration: none; opacity: 0; font-weight: 400;
+.content .anchor {
+  display: inline-flex; vertical-align: middle; margin-left: 8px; padding: 4px; border-radius: 6px;
+  color: var(--muted); opacity: 0; transition: opacity .15s;
 }
-.content :is(h1,h2,h3):hover .anchor { opacity: 1; }
+.content .anchor svg { width: .75em; height: .75em; min-width: 14px; min-height: 14px; }
+.content :is(h1,h2,h3,h4,h5,h6):hover .anchor, .content .anchor:focus-visible { opacity: 1; }
+.content .anchor:hover { color: var(--accent); background: var(--accent-soft); }
+@media (hover: none) { .content .anchor { display: none; } }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; z-index: 120; transform: translate(-50%, 20px); opacity: 0;
+  padding: 10px 16px; border-radius: 10px; background: var(--text); color: var(--paper); font-size: 14px;
+  pointer-events: none; transition: opacity .2s, transform .2s;
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
 .content { overflow-wrap: anywhere; }
 .content p { margin: 0 0 14px; scroll-margin-top: 76px; }
 .content a { color: var(--accent); }
@@ -298,6 +308,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   </main>
 </div>
 
+<div class="toast" id="toast" role="status"></div>
 <div class="lightbox" id="lightbox"><img alt=""></div>
 <button class="btn icon totop" id="totop" aria-label="Наверх">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>
@@ -458,6 +469,26 @@ mark.hit.current { outline: 2px solid var(--accent); }
   document.getElementById('menuBtn').onclick = function () { document.body.classList.toggle('nav-open'); };
   document.getElementById('scrim').onclick = closeNav;
   toc.addEventListener('click', function (e) { if (e.target.tagName === 'A') closeNav(); });
+
+  /* Значок у заголовка: копирует ссылку на раздел */
+  var toast = document.getElementById('toast'), toastTimer;
+  function say(text) {
+    toast.textContent = text; toast.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { toast.classList.remove('on'); }, 1800);
+  }
+  content.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a.anchor');
+    if (!a) return;
+    e.preventDefault();
+    var url = location.href.split('#')[0] + a.getAttribute('href');
+    history.replaceState(null, '', a.getAttribute('href'));
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(url).then(function () { say('Ссылка на раздел скопирована'); },
+                                               function () { say('Ссылка на раздел — в адресной строке'); });
+    } else {
+      say('Ссылка на раздел — в адресной строке');
+    }
+  });
 
   /* Лайтбокс */
   var lb = document.getElementById('lightbox'), lbImg = lb.querySelector('img');

@@ -55,6 +55,9 @@ ICONS = {
     "tip": '<path d="M9 18h6m-5 3h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/>',
     "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
 }
+LINK_ICON = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+             'stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>'
+             '<path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>')
 CAPTION_RE = re.compile(r"^\s*(рис\.|рисунок|скриншот)\s*\d*", re.I)
 
 # Маркетплейсы для фильтра на странице: раздел относится к маркетплейсу, если тот назван
@@ -175,8 +178,9 @@ def postprocess(fragment, own_doc_id=None):
         for a in h.find_all("a", href=False):
             a.unwrap()
         h["data-title"] = title
-        anchor = soup.new_tag("a", attrs={"class": "anchor", "href": f"#{h['id']}", "aria-hidden": "true"})
-        anchor.string = "#"
+        anchor = soup.new_tag("a", attrs={"class": "anchor", "href": f"#{h['id']}",
+                                          "title": "Скопировать ссылку на раздел"})
+        anchor.append(BeautifulSoup(LINK_ICON, "html.parser"))
         h.append(anchor)
 
     # Внутренние ссылки документа («см. раздел …») ведут на новые якоря заголовков
@@ -307,8 +311,38 @@ def postprocess(fragment, own_doc_id=None):
             a["target"] = "_blank"
             a["rel"] = "noopener"
 
+    remove_marketplace_lists(soup)
     tag_marketplaces(soup)
     return str(soup)
+
+
+def is_marketplace_line(el):
+    """Абзац, в котором только название маркетплейса («Wildberries», «OZON FBS»)."""
+    if el is None or el.name != "p" or el.find("img") or len(text_of(el)) >= 40:
+        return False
+    own = marketplaces_in(text_of(el))
+    if len(own) != 1:
+        return False
+    rest = re.sub(MARKETPLACES[own[0]], "", text_of(el).lower())
+    return not re.sub(r"[\W_]|fbs|fbo", "", rest)
+
+
+def remove_marketplace_lists(soup):
+    """Убирает списки-перечисления «Wildberries / OZON / ЯндексМаркет …» (3+ строки подряд):
+    это навигация из Google Doc, на странице её заменяют оглавление и фильтр по маркетплейсу."""
+    removed = 0
+    for el in soup.find_all("p", recursive=False):
+        if el.parent is None or not is_marketplace_line(el) or is_marketplace_line(el.find_previous_sibling()):
+            continue
+        run = [el]
+        while is_marketplace_line(run[-1].find_next_sibling()):
+            run.append(run[-1].find_next_sibling())
+        if len(run) >= 3:
+            for x in run:
+                x.decompose()
+            removed += 1
+    if removed:
+        print(f"  · убрано списков-перечислений маркетплейсов: {removed}")
 
 
 def tag_marketplaces(soup):
