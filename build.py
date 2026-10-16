@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 EMBED_LIMIT_MB = 40  # больше — .docx кладём рядом, иначе HTML станет неподъёмным
 MAX_SIDE = 2000      # максимальная сторона скриншота, px
+MAX_SHOW_HEIGHT = 900  # выше этого картинка показывается уменьшенной (по клику — полный размер)
 WEB_DOCX = "instrukciya.docx"  # имя .docx на сайте (латиницей — надёжнее в адресе)
 MEDIA_ATTR = re.compile(r'data-media="([^"]+)"')
 
@@ -679,7 +680,10 @@ def main():
             data = f.read()
         attrs = {"alt": image.alt_text or ""}
         try:  # размеры заранее — чтобы страница не «прыгала», пока грузятся картинки
-            attrs["width"], attrs["height"] = (str(v) for v in Image.open(io.BytesIO(data)).size)
+            w, h = Image.open(io.BytesIO(data)).size
+            if h > MAX_SHOW_HEIGHT:  # высокие блок-схемы — не выше экрана; полный размер — по клику
+                w, h = max(1, round(w * MAX_SHOW_HEIGHT / h)), MAX_SHOW_HEIGHT
+            attrs["width"], attrs["height"] = str(w), str(h)
         except Exception:
             pass
         path = media.get(hashlib.sha1(data).hexdigest())
