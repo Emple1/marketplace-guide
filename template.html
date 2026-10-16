@@ -40,7 +40,7 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: auto; }  /* без плавной прокрутки: иначе по дороге грузятся все скриншоты */
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 16px/1.65 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -394,8 +394,8 @@ mark.hit.current { outline: 2px solid var(--accent); }
 
 <div class="toast" id="toast" role="status"></div>
 <div class="lightbox" id="lightbox"><img alt=""></div>
-<button class="btn icon totop" id="totop" aria-label="Наверх">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>
+<button class="btn icon totop" id="totop" aria-label="В конец инструкции" title="В конец инструкции">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
 </button>
 
 {{DOCX_DATA}}
@@ -691,15 +691,21 @@ mark.hit.current { outline: 2px solid var(--accent); }
   lb.onclick = function () { lb.classList.remove('on'); };
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { lb.classList.remove('on'); closeNav(); } });
 
-  /* Кнопка «наверх» */
-  var totop = document.getElementById('totop');
-  addEventListener('scroll', function () { totop.classList.toggle('on', scrollY > 800); }, { passive: true });
+  /* Кнопка «вниз» (в конец инструкции); наверх — по клику на название в шапке */
+  var toEnd = document.getElementById('totop');
+  function toggleEnd() {
+    var left = document.documentElement.scrollHeight - (scrollY + innerHeight);
+    toEnd.classList.toggle('on', left > 800);  // у самого конца кнопка не нужна
+  }
+  addEventListener('scroll', toggleEnd, { passive: true });
+  setTimeout(toggleEnd, 0);
+  // Мгновенно, без плавной прокрутки: иначе по дороге начнут грузиться все скриншоты
+  toEnd.onclick = function () { scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }); };
   function goTop(e) {
     if (e) e.preventDefault();
-    scrollTo({ top: 0 });
+    scrollTo({ top: 0, behavior: 'instant' });
     history.replaceState(null, '', location.href.split('#')[0]);
   }
-  totop.onclick = goTop;
   document.getElementById('toTop').onclick = goTop;
 
   /* Поиск: умный по разделам (синонимы, формы слов) + точные совпадения в тексте */
