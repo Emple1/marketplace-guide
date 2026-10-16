@@ -74,12 +74,12 @@ body {
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.icon { width: 38px; padding: 0; justify-content: center; }
 .btn svg { width: 18px; height: 18px; flex: none; }
-#menuBtn { display: none; }
+
 
 /* ---------- Раскладка ---------- */
 .layout { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
 .sidebar {
-  position: sticky; top: 60px; height: calc(100vh - 60px); overflow-y: auto;
+  position: sticky; top: 60px; height: calc(100vh - 60px); overflow-y: auto; overflow-x: hidden;
   padding: 20px 14px 40px 20px; border-right: 1px solid var(--border); background: var(--bg);
 }
 /* Поиск всегда виден вверху панели, оглавление листается под ним */
@@ -143,16 +143,39 @@ body {
 .mp-banner[hidden] { display: none; }
 .mp-banner button { margin-left: auto; }
 .toc { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.toc-head { display: flex; align-items: center; gap: 4px; margin: 4px 0 6px 2px; }
+.toc-head .mp-title { margin: 0; flex: 1; }
+.toc-tool {
+  border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+  padding: 3px 6px; border-radius: 6px;
+}
+.toc-tool:hover { color: var(--accent); background: var(--accent-soft); }
+.toc li { position: relative; }
+.toc li.toc-closed { display: none; }
+.toc-tog {
+  position: absolute; left: -2px; top: 5px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
+  background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center;
+}
+.toc-tog:hover { color: var(--accent); background: var(--accent-soft); }
+.toc-tog svg { width: 14px; height: 14px; transition: transform .15s; transform: rotate(-90deg); }
+.toc-tog.open svg { transform: none; }
+.toc .l2 .toc-tog { left: 10px; }
 .toc a {
   display: block; padding: 5px 10px; border-radius: 8px; color: var(--muted); text-decoration: none;
   border-left: 2px solid transparent; line-height: 1.4;
 }
 .toc a:hover { color: var(--text); background: var(--accent-soft); }
 .toc a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
-.toc .l1 > a { color: var(--text); font-weight: 600; margin-top: 6px; }
+.toc .l1 > a { color: var(--text); font-weight: 600; margin-top: 6px; padding-left: 20px; }
+.toc .l1 > .toc-tog { top: 11px; }
 .toc .l1 > a.active { color: var(--accent); }
-.toc .l2 > a { padding-left: 22px; }
-.toc .l3 > a { padding-left: 34px; font-size: 13px; }
+.toc .l2 > a { padding-left: 32px; }
+.toc .l3 > a { padding-left: 44px; font-size: 13px; }
+/* Скрытая боковая панель на компьютере */
+@media (min-width: 981px) {
+  body.nav-hidden .layout { grid-template-columns: minmax(0, 1fr); }
+  body.nav-hidden .sidebar { display: none; }
+}
 
 .main { padding: 32px 40px 80px; min-width: 0; }
 .doc {
@@ -291,7 +314,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
 <body>
 
 <header class="topbar">
-  <button class="btn icon" id="menuBtn" aria-label="Оглавление">
+  <button class="btn icon" id="menuBtn" aria-label="Оглавление" title="Показать / скрыть оглавление">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
   <a class="brand" href="{{HOME_URL}}" target="_blank" rel="noopener" title="Сайт модуля «Управление маркетплейсами на 1С»">{{LOGO}}<span>{{TITLE}}</span></a>
@@ -322,7 +345,14 @@ mark.hit.current { outline: 2px solid var(--accent); }
     </div>
     </div>
     <div class="results" id="qResults"></div>
-    <nav><ul class="toc" id="toc"></ul></nav>
+    <nav>
+      <div class="toc-head">
+        <div class="mp-title">Оглавление</div>
+        <button class="toc-tool" id="tocOpenAll" type="button" title="Развернуть все разделы">Развернуть</button>
+        <button class="toc-tool" id="tocCloseAll" type="button" title="Свернуть до основных разделов">Свернуть</button>
+      </div>
+      <ul class="toc" id="toc"></ul>
+    </nav>
   </aside>
   <div class="scrim" id="scrim"></div>
 
@@ -435,22 +465,59 @@ mark.hit.current { outline: 2px solid var(--accent); }
   /* Оглавление + подсветка текущего раздела */
   var heads = content.querySelectorAll('h1[id], h2[id], h3[id]');
   var toc = document.getElementById('toc'), links = {};
+  // Дерево: пункты с подразделами сворачиваются стрелкой. Открыта ветка текущего раздела
+  // и то, что пользователь раскрыл сам.
+  var CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
+                'stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+  var items = [], stack = [], manual = {}, autoOpen = {};
   heads.forEach(function (h) {
-    var li = document.createElement('li'), a = document.createElement('a');
-    li.className = 'l' + h.tagName[1];
+    var li = document.createElement('li'), a = document.createElement('a'), level = +h.tagName[1];
+    li.className = 'l' + level;
     a.href = '#' + h.id; a.textContent = h.getAttribute('data-title') || h.textContent;
     li.appendChild(a); toc.appendChild(li); links[h.id] = a;
+    while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+    var it = { id: h.id, li: li, level: level, parents: stack.map(function (x) { return x.id; }), kids: 0 };
+    if (stack.length) stack[stack.length - 1].kids++;
+    items.push(it); stack.push(it);
   });
-  if ('IntersectionObserver' in window) {
-    var visible = {};
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) { visible[en.target.id] = en.isIntersecting; });
+  var tocMode = store.get('toc-mode') || 'auto';  // auto | all
+  function isOpen(id) { return id in manual ? manual[id] : (tocMode === 'all' || !!autoOpen[id]); }
+  function layoutToc() {
+    items.forEach(function (it) {
+      it.li.classList.toggle('toc-closed', !it.parents.every(isOpen));
+      if (it.tog) it.tog.classList.toggle('open', isOpen(it.id));
+    });
+  }
+  items.forEach(function (it) {
+    if (!it.kids) return;
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'toc-tog'; b.innerHTML = CHEVRON;
+    b.setAttribute('aria-label', 'Развернуть / свернуть');
+    b.onclick = function (e) { e.preventDefault(); manual[it.id] = !isOpen(it.id); layoutToc(); };
+    it.li.insertBefore(b, it.li.firstChild);
+    it.tog = b;
+  });
+  function setActiveBranch(id) {
+    autoOpen = {};
+    items.forEach(function (it) { if (it.id === id) { it.parents.forEach(function (p) { autoOpen[p] = 1; }); autoOpen[id] = 1; } });
+    layoutToc();
+  }
+  document.getElementById('tocOpenAll').onclick = function () {
+    tocMode = 'all'; manual = {}; store.set('toc-mode', tocMode); layoutToc();
+  };
+  document.getElementById('tocCloseAll').onclick = function () {
+    tocMode = 'auto'; manual = {}; store.set('toc-mode', tocMode); autoOpen = {}; layoutToc();
+  };
+  layoutToc();
+  // Текущий раздел: последний заголовок выше верхней части экрана
+  function spy() {
       var cur = null;
       for (var i = 0; i < heads.length; i++) {
         if (heads[i].offsetParent === null) continue;  // скрыт фильтром
         if (heads[i].getBoundingClientRect().top < 120) cur = heads[i].id;
       }
       if (!cur && heads.length) cur = heads[0].id;
+      if (cur !== window.__tocCur) { window.__tocCur = cur; setActiveBranch(cur); }
       Object.keys(links).forEach(function (id) { links[id].classList.toggle('active', id === cur); });
       if (cur && links[cur] && document.body.classList.contains('nav-open') === false) {
         var l = links[cur], sb = document.getElementById('sidebar');
@@ -459,9 +526,14 @@ mark.hit.current { outline: 2px solid var(--accent); }
         var top = s.top + document.getElementById('searchBox').offsetHeight;
         if (r.top < top + 10 || r.bottom > s.bottom - 20) sb.scrollTop += r.top - top - (s.bottom - top) / 3;
       }
-    }, { rootMargin: '-60px 0px -60% 0px' });
-    heads.forEach(function (h) { io.observe(h); });
   }
+  var spyTimer = null, spyTail = null;
+  addEventListener('scroll', function () {
+    clearTimeout(spyTail); spyTail = setTimeout(spy, 150);  // и ещё раз, когда прокрутка остановилась
+    if (spyTimer) return;
+    spyTimer = setTimeout(function () { spyTimer = null; spy(); }, 100);
+  }, { passive: true });
+  setTimeout(spy, 0);
 
   /* Фильтр по маркетплейсу: разделы помечены при сборке атрибутом data-mp */
   var MP = [['wb', 'Wildberries'], ['ozon', 'Ozon'], ['ym', 'Яндекс Маркет'], ['mm', 'МегаМаркет'],
@@ -548,7 +620,12 @@ mark.hit.current { outline: 2px solid var(--accent); }
 
   /* Мобильное меню */
   function closeNav() { document.body.classList.remove('nav-open'); }
-  document.getElementById('menuBtn').onclick = function () { document.body.classList.toggle('nav-open'); };
+  if (store.get('nav-hidden') === '1') document.body.classList.add('nav-hidden');
+  document.getElementById('menuBtn').onclick = function () {
+    if (matchMedia('(max-width: 980px)').matches) { document.body.classList.toggle('nav-open'); return; }
+    var hidden = document.body.classList.toggle('nav-hidden');
+    store.set('nav-hidden', hidden ? '1' : '0');
+  };
   document.getElementById('scrim').onclick = closeNav;
   toc.addEventListener('click', function (e) { if (e.target.tagName === 'A') closeNav(); });
 
