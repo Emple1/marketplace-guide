@@ -740,6 +740,7 @@ def main():
                           cfg.get("collapsed", []), cfg.get("matrix_sheet"))
 
     DIST.mkdir(exist_ok=True)
+    search_index = build_search_index(content)
     name = cfg["file_name"]
     docx_name = f"{name}.docx"
     (DIST / docx_name).write_bytes(docx_bytes)
@@ -762,7 +763,8 @@ def main():
         single = MEDIA_ATTR.sub(inline, content)
         docx_href, docx_data = docx_name, ""
     out = DIST / f"{name}.html"
-    out.write_text(render_page(cfg, single, today, docx_name, docx_href, docx_data), encoding="utf-8")
+    out.write_text(render_page(cfg, single, today, docx_name, docx_href, docx_data, search_index),
+                   encoding="utf-8")
     (DIST / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
 
     # 2) Версия для сайта: лёгкая страница, скриншоты отдельными файлами (грузятся по мере
@@ -780,7 +782,7 @@ def main():
     web_content = MEDIA_ATTR.sub(lambda m: f'data-src="img/{web_names[m.group(1)]}" decoding="async"', content)
     web_content = web_content.replace(' loading="lazy"', '')
     (web / WEB_DOCX).write_bytes(docx_bytes)
-    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, ""),
+    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, "", search_index),
                                     encoding="utf-8")
     (web / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
     (web / "sections.json").write_text(json.dumps(section_index(content, zf), ensure_ascii=False),
@@ -811,7 +813,41 @@ def section_index(content, zf):
     return index
 
 
-def render_page(cfg, content, today, docx_name, docx_href, docx_data):
+def build_search_index(content):
+    """Предрасчитанный поисковый индекс для страницы: {id раздела: {t, c, x, s}}.
+
+    Повторяет логику построения индекса из template.html: t — слова названия раздела,
+    c — слова пути (родительских заголовков), x — слова всего текста раздела вместе
+    с подразделами (до следующего заголовка того же или более высокого уровня),
+    s — длина текста (для сортировки). Слова: нижний регистр, ё→е, разбиение
+    по всему, что не буква и не цифра. Кодируется в страницу как window.__SEARCH_INDEX;
+    если индекса нет (старая сборка), страница строит его из DOM сама."""
+    def ws(text):
+        return sorted({w for w in re.split(r"[^a-zа-я0-9]+", text.lower().replace("ё", "е")) if w})
+
+    soup = BeautifulSoup(content, "html.parser")
+    children = [c for c in soup.children if getattr(c, "name", None)]
+    index, trail = {}, []
+    for i, el in enumerate(children):
+        if not re.fullmatch(r"h[1-6]", el.name) or not el.get("id"):
+            continue
+        level = int(el.name[1])
+        while trail and trail[-1][0] >= level:
+            trail.pop()
+        parts = []
+        for e in children[i + 1:]:
+            if re.fullmatch(r"h[1-6]", e.name) and int(e.name[1]) <= level:
+                break
+            parts.append(e.get_text())
+        text = " ".join(parts)
+        title = el.get("data-title") or el.get_text()
+        crumbs = [t for _, t in trail]
+        index[el["id"]] = {"t": ws(title), "c": ws(" ".join(crumbs)), "x": ws(text), "s": len(text)}
+        trail.append((level, title))
+    return index
+
+
+def render_page(cfg, content, today, docx_name, docx_href, docx_data, search_index=None):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     for key, value in {
         "TITLE": html.escape(cfg["title"]),
@@ -824,6 +860,9 @@ def render_page(cfg, content, today, docx_name, docx_href, docx_data):
         "LOGO": logo_html(cfg),
         "DOCX_NAME": html.escape(docx_name),
         "DOCX_HREF": html.escape(docx_href),
+        "SEARCH_INDEX": ('<script>window.__SEARCH_INDEX='
+                         + json.dumps(search_index or {}, ensure_ascii=False, separators=(",", ":"))
+                         + ";</script>"),
     }.items():
         page = page.replace("{{" + key + "}}", value)
     # Содержимое подставляем последним, чтобы случайные {{…}} в тексте не трогать
