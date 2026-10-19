@@ -780,7 +780,7 @@ def main():
     web_content = MEDIA_ATTR.sub(lambda m: f'data-src="img/{web_names[m.group(1)]}" decoding="async"', content)
     web_content = web_content.replace(' loading="lazy"', '')
     (web / WEB_DOCX).write_bytes(docx_bytes)
-    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, "", web=True),
+    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, ""),
                                     encoding="utf-8")
     (web / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
     (web / "sections.json").write_text(json.dumps(section_index(content, zf), ensure_ascii=False),
@@ -811,23 +811,7 @@ def section_index(content, zf):
     return index
 
 
-def metrika_html(counter):
-    """Код счётчика Яндекс Метрики (без Вебвизора); пусто, если счётчик не задан."""
-    counter = str(counter or "").strip()
-    if not counter.isdigit():
-        return ""
-    return f"""<script>
-window.YM_ID = {counter};
-(function(m,e,t,r,i,k,a){{m[i]=m[i]||function(){{(m[i].a=m[i].a||[]).push(arguments)}};m[i].l=1*new Date();
-for (var j = 0; j < document.scripts.length; j++) {{ if (document.scripts[j].src === r) {{ return; }} }}
-k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)}})
-(window, document, "script", "https://mc.yandex.ru/metrika/tag.js?id={counter}", "ym");
-ym({counter}, "init", {{ ssr: true, referrer: document.referrer, url: location.href, clickmap: true, trackLinks: true, accurateTrackBounce: true, trackHash: true }});
-</script>
-<noscript><div><img src="https://mc.yandex.ru/watch/{counter}" style="position:absolute; left:-9999px;" alt=""></div></noscript>"""
-
-
-def render_page(cfg, content, today, docx_name, docx_href, docx_data, web=False):
+def render_page(cfg, content, today, docx_name, docx_href, docx_data):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     for key, value in {
         "TITLE": html.escape(cfg["title"]),
@@ -840,7 +824,6 @@ def render_page(cfg, content, today, docx_name, docx_href, docx_data, web=False)
         "LOGO": logo_html(cfg),
         "DOCX_NAME": html.escape(docx_name),
         "DOCX_HREF": html.escape(docx_href),
-        "METRIKA": metrika_html(cfg.get("metrika_id")) if web else "",
     }.items():
         page = page.replace("{{" + key + "}}", value)
     # Содержимое подставляем последним, чтобы случайные {{…}} в тексте не трогать

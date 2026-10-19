@@ -334,7 +334,6 @@ mark.hit.current { outline: 2px solid var(--accent); }
   .fold-fade::after { display: none; }
 }
 </style>
-{{METRIKA}}
 </head>
 <body>
 
@@ -423,12 +422,6 @@ mark.hit.current { outline: 2px solid var(--accent); }
   var content = document.getElementById('content');
   var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
                 set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
-  /* Статистика (Яндекс Метрика): только на сайте и только если в config.json задан metrika_id */
-  function track(kind, data) {
-    try { if (window.YM_ID && window.ym) window.ym(window.YM_ID, kind, data); } catch (e) {}
-  }
-
-  document.getElementById('wordBtn').addEventListener('click', function () { track('reachGoal', 'download_word'); });
 
   /* Тема */
   var saved = store.get('mp-theme');
@@ -614,7 +607,6 @@ mark.hit.current { outline: 2px solid var(--accent); }
     banner.hidden = !code;
     if (code) document.getElementById('mpName').textContent = present.filter(function (m) { return m[0] === code; })[0][1];
     store.set('mp-filter', code);
-    if (!keepScroll && code) track('params', { mp: code });
     renderNew();
     try {
       var u = new URL(location.href);
@@ -942,20 +934,11 @@ mark.hit.current { outline: 2px solid var(--accent); }
     if (term.length < 2) { found = []; render(); info.classList.remove('on'); return; }
     found = smart(term);
     render();
-    clearTimeout(trackTimer);
-    trackTimer = setTimeout(function () { trackSearch(term, found.length); }, 1500);
     mark([content], phraseRanges(term));
     info.classList.add('on');
     if (hits.length) cnt.textContent = 'Точных совпадений в тексте: ' + hits.length;
     else cnt.textContent = found.length ? 'Точных совпадений в тексте нет' : 'Ничего не найдено';
     document.getElementById('qPrev').hidden = document.getElementById('qNext').hidden = !hits.length;
-  }
-  var trackTimer, lastTracked = '';
-  function trackSearch(term, n) {  // что ищут клиенты — в Метрике: «Параметры визитов» и цель search_empty
-    if (term === lastTracked) return;
-    lastTracked = term;
-    track('params', { search: { query: term, found: n } });
-    if (!n) track('reachGoal', 'search_empty');
   }
   function go(i) {
     if (!hits.length) return;
