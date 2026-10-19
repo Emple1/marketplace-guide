@@ -110,6 +110,8 @@ body {
 }
 .result:hover, .result.sel { background: var(--accent-soft); }
 .r-title { display: block; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.q-fix { font-size: 13px; color: var(--muted); margin: 0 0 8px 2px; }
+.q-fix button { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
 .r-crumbs { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
 .content .flash { animation: flash 1.6s ease-out; border-radius: 6px; }
 @keyframes flash { 0%, 30% { background: var(--mark); } 100% { background: transparent; } }
@@ -779,72 +781,233 @@ mark.hit.current { outline: 2px solid var(--accent); }
   ];
   var STOP = { 'как': 1, 'где': 1, 'что': 1, 'в': 1, 'во': 1, 'на': 1, 'по': 1, 'для': 1, 'и': 1, 'с': 1, 'со': 1, 'о': 1,
                'об': 1, 'не': 1, 'ли': 1, 'мне': 1, 'я': 1, 'это': 1, 'или': 1, 'к': 1, 'у': 1, 'из': 1, 'а': 1 };
+  // Первые 8 групп — маркетплейсы (коды как в фильтре)
+  var MP_CODES = ['wb', 'ozon', 'ym', 'mm', 'ali', 'mvideo', 'lamoda', 'magnit'];
+  var FIELD_BOOST = { title: 10, crumbs: 4, text: 1 };  // вес совпадения в названии / в пути / в тексте
+  var W_SYN = 0.8, W_PREFIX = 0.8, W_FUZZY = 0.7;       // синоним (кроме названий маркетплейсов) / по началу основы / с опечаткой
+  var BM25_K1 = 1.2;
+  var BM25_B = { title: 0, crumbs: 0, text: 0.75 };      // длину учитываем только у текста: длинное название не хуже короткого
+
   function words(text) {
     return text.toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(Boolean);
   }
-  // Основа слова: «заказы» → «зака», «установить» → «устано» (находит «установка», «установки» …)
-  function stem(w) {
-    if (w.length <= 3) return w;
-    return w.slice(0, w.length <= 5 ? w.length - 1 : Math.max(4, Math.ceil(w.length * 0.6)));
-  }
-  function fits(token, alt) { return alt.length <= 3 ? token === alt : token.indexOf(stem(alt)) === 0; }
-  // Первые 8 групп — маркетплейсы (коды как в фильтре)
-  var MP_CODES = ['wb', 'ozon', 'ym', 'mm', 'ali', 'mvideo', 'lamoda', 'magnit'];
-  function alternatives(w) {
-    for (var g = 0; g < SYN.length; g++) {
-      if (SYN[g].some(function (m) { return w === m || (m.length > 3 && w.length > 3 && fits(w, m)); })) {
-        var alts = SYN[g].concat([w]);
-        alts.mp = MP_CODES[g];
-        return alts;
+
+  // Русский стеммер Snowball (Porter): «заказами» → «заказ», «настройки» → «настройк».
+  // Латиница, цифры и слова до 3 букв не меняются.
+  var stemCache = {};
+  function stemRu(w) {
+    if (w in stemCache) return stemCache[w];
+    var res = w;
+    var m = w.length > 3 && !/[^а-я]/.test(w) && /^(.*?[аеиоуыэюя])(.*)$/.exec(w);
+    if (m && m[2]) {
+      var pre = m[1], rv = m[2], t;
+      // 1. деепричастие → иначе возвратность + прилагательное/причастие, глагол или существительное
+      t = rv.replace(/(ившись|ывшись|ивши|ывши|ив|ыв)$/, '');
+      if (t === rv) t = rv.replace(/([ая])(вшись|вши|в)$/, '$1');
+      if (t === rv) {
+        rv = rv.replace(/(ся|сь)$/, '');
+        t = rv.replace(/(ее|ие|ые|ое|ими|ыми|ей|ий|ый|ой|ем|им|ым|ом|его|ого|ему|ому|их|ых|ую|юю|ая|яя|ою|ею)$/, '');
+        if (t !== rv) {
+          rv = t;
+          t = rv.replace(/(ивш|ывш|ующ)$/, '');
+          if (t === rv) t = rv.replace(/([ая])(ем|нн|вш|ющ|щ)$/, '$1');
+        } else {
+          t = rv.replace(/(ила|ыла|ена|ейте|уйте|ите|или|ыли|ей|уй|ил|ыл|им|ым|ен|ило|ыло|ено|ят|ует|уют|ит|ыт|ены|ить|ыть|ишь|ую|ю)$/, '');
+          if (t === rv) t = rv.replace(/([ая])(ла|на|ете|йте|ли|й|л|ем|н|ло|но|ет|ют|ны|ть|ешь|нно)$/, '$1');
+          if (t === rv) t = rv.replace(/(иями|ями|ами|ией|иям|ием|иях|ев|ов|ие|ье|еи|ии|ей|ой|ий|ям|ем|ам|ом|ах|ях|ию|ью|ия|ья|а|е|и|й|о|у|ы|ь|ю|я)$/, '');
+        }
+      }
+      rv = t.replace(/и$/, '');
+      res = pre + rv;
+      // 3. словообразовательный суффикс «ост(ь)» — только в области R2
+      var d = /ость?$/.exec(res);
+      if (d && d.index >= regionR2(res)) res = res.slice(0, d.index);
+      // 4. «нн» → «н», превосходная степень, мягкий знак
+      if (/нн$/.test(res)) res = res.slice(0, -1);
+      else {
+        t = res.replace(/ейше?$/, '');
+        if (t !== res) { res = t; if (/нн$/.test(res)) res = res.slice(0, -1); }
+        else res = res.replace(/ь$/, '');
       }
     }
-    return [w];
+    return (stemCache[w] = res);
   }
-  function matches(set, alts) {
-    for (var t in set) for (var i = 0; i < alts.length; i++) if (fits(t, alts[i])) return true;
-    return false;
+  // R1 — после первой согласной, идущей за гласной; R2 — то же внутри R1
+  function regionR2(s) {
+    function after(from) {
+      for (var i = from + 1; i < s.length; i++)
+        if ('аеиоуыэюя'.indexOf(s[i]) < 0 && 'аеиоуыэюя'.indexOf(s[i - 1]) >= 0) return i + 1;
+      return s.length;
+    }
+    return after(after(0));
   }
-  function toSet(list) { var o = {}; list.forEach(function (w) { o[w] = 1; }); return o; }
 
-  // Разделы: заголовок, путь (заголовки выше) и весь текст раздела вместе с подразделами
+  // Расстояние Дамерау — Левенштейна с ранним выходом, если уже больше max
+  function editDistance(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    var prev2 = null, prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      cur = [i];
+      var rowMin = i;
+      for (j = 1; j <= b.length; j++) {
+        var cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        var v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+        if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+        cur[j] = v;
+        if (v < rowMin) rowMin = v;
+      }
+      if (rowMin > max) return max + 1;
+      prev2 = prev; prev = cur;
+    }
+    return prev[b.length];
+  }
+  function typoLimit(len) { return len >= 6 ? 2 : len >= 4 ? 1 : 0; }
+
+  // Индекс: для каждого раздела — частоты основ в названии, пути и тексте (с подразделами)
+  function stemCounts(list, into) {
+    list.forEach(function (w) { var s = stemRu(w); into[s] = (into[s] || 0) + 1; });
+    return into;
+  }
   var sections = [], all = Array.prototype.slice.call(content.children), trail = [];
+  var elStems = all.map(function (el) { return /^H[1-6]$/.test(el.tagName) ? null : stemCounts(words(el.textContent), {}); });
+  var df = {}, surface = {}, sumLen = { title: 0, crumbs: 0, text: 0 };
   all.forEach(function (el, idx) {
     if (!/^H[1-6]$/.test(el.tagName) || !el.id) return;
     var level = +el.tagName[1];
     while (trail.length && trail[trail.length - 1].level >= level) trail.pop();
-    var els = [el], text = '';
+    var els = [el], text = {}, len = 0, size = 0;
     for (var k = idx + 1; k < all.length; k++) {
       var e = all[k];
       if (/^H[1-6]$/.test(e.tagName) && +e.tagName[1] <= level) break;
       els.push(e);
-      text += ' ' + e.textContent;
+      var c = elStems[k] || stemCounts(words(e.getAttribute('data-title') || e.textContent), {});
+      for (var s in c) { text[s] = (text[s] || 0) + c[s]; len += c[s]; }
+      size += e.textContent.length;
     }
     var title = el.getAttribute('data-title') || el.textContent;
     var crumbs = trail.map(function (t) { return t.title; });
-    sections.push({ h: el, level: level, title: title, crumbs: crumbs,
-                    tw: toSet(words(title)), cw: toSet(words(crumbs.join(' '))),
-                    xw: toSet(words(text)), size: text.length, els: els });
+    var titleWords = words(title);
+    titleWords.forEach(function (w) { var st = stemRu(w); if (!surface[st]) surface[st] = w; });
+    var tf = { title: stemCounts(titleWords, {}), crumbs: stemCounts(words(crumbs.join(' ')), {}), text: text };
+    var lens = { title: titleWords.length, crumbs: Object.keys(tf.crumbs).length, text: len };
+    var seen = {};
+    ['title', 'crumbs', 'text'].forEach(function (f) {
+      sumLen[f] += lens[f];
+      for (var st in tf[f]) if (!seen[st]) { seen[st] = 1; df[st] = (df[st] || 0) + 1; }
+    });
+    sections.push({ h: el, level: level, title: title, crumbs: crumbs, tf: tf, lens: lens, size: size, els: els });
     trail.push({ level: level, title: title });
   });
+  // Слова текста, которых нет в заголовках, — тоже как варианты для подсказки «Показаны результаты для»
+  all.forEach(function (el) { words(el.textContent).forEach(function (w) { var st = stemRu(w); if (!surface[st]) surface[st] = w; }); });
+  var VOCAB = Object.keys(df), N = sections.length || 1;
+  var avgLen = { title: sumLen.title / N || 1, crumbs: sumLen.crumbs / N || 1, text: sumLen.text / N || 1 };
+  function idf(st) { var n = df[st] || 0; return Math.log(1 + (N - n + 0.5) / (n + 0.5)); }
 
+  // Слово запроса → номер группы синонимов (точно или по основе: «озоне» → Ozon), иначе -1
+  function synExact(w) {
+    for (var g = 0; g < SYN.length; g++)
+      for (var i = 0; i < SYN[g].length; i++) {
+        var m = SYN[g][i];
+        if (w === m || (m.length > 3 && w.length > 3 && stemRu(w) === stemRu(m))) return g;
+      }
+    return -1;
+  }
+  // Опечатка в синониме: «вайлбериз» → вайлдбериз, «озн» → озон. → [группа, исправленное слово] или null
+  function synFuzzy(w) {
+    if (w.length < 3 || /[0-9]/.test(w)) return null;
+    var lim = Math.max(1, typoLimit(w.length)), best = null, bestD = lim + 1;
+    for (var g = 0; g < SYN.length; g++)
+      for (var i = 0; i < SYN[g].length; i++) {
+        var m = SYN[g][i];
+        if (m.length < 4) continue;
+        var d = editDistance(w, m, lim);
+        if (d < bestD) { bestD = d; best = [g, m]; }
+      }
+    return best;
+  }
+  function prefixStems(st, stems) {
+    if (st.length >= 4) VOCAB.forEach(function (v) { if (v !== st && v.indexOf(st) === 0 && !(v in stems)) stems[v] = W_PREFIX; });
+  }
+  // Слово запроса → {основа: вес}: точные основы, основы, начинающиеся с неё; если ничего нет — с опечаткой
+  function expand(w) {
+    var g = synExact(w), stems = {}, fixed = null;
+    function add(list, weight) {
+      list.forEach(function (a) {
+        var st = stemRu(a);
+        if (df[st] && !(stems[st] >= weight)) stems[st] = weight;
+        prefixStems(st, stems);
+      });
+    }
+    add([w], 1);
+    if (g >= 0) add(SYN[g], g < MP_CODES.length ? 1 : W_SYN);
+    if (!Object.keys(stems).length && g < 0) {
+      var sf = synFuzzy(w);
+      if (sf) { g = sf[0]; fixed = sf[1]; add(SYN[g], 1); }
+    }
+    if (!Object.keys(stems).length && g < 0) {
+      var st = stemRu(w), lim = typoLimit(st.length), bestD = lim + 1, best = [];
+      if (lim) VOCAB.forEach(function (v) {
+        var d = editDistance(st, v, lim);
+        if (d < bestD) { bestD = d; best = [v]; } else if (d === bestD && d <= lim) best.push(v);
+      });
+      best.forEach(function (v) { stems[v] = W_FUZZY; });
+      if (best.length) {
+        best.sort(function (a, b) { return (df[b] || 0) - (df[a] || 0); });
+        fixed = surface[best[0]] || best[0];
+      }
+    }
+    // Редкость слова (IDF) — одна на всё слово запроса: по самой частой из точных основ. Иначе редкий синоним
+    // («репрайсер» для «цены») обгонял бы само слово только потому, что встречается реже
+    var keys = Object.keys(stems), exact = keys.filter(function (k) { return stems[k] === 1; });
+    var termIdf = Math.min.apply(null, (exact.length ? exact : keys).map(idf).concat([Infinity]));
+    return { word: w, stems: stems, idf: isFinite(termIdf) ? termIdf : 0,
+             mp: g >= 0 && g < MP_CODES.length ? MP_CODES[g] : null, fixed: fixed };
+  }
+
+  // BM25 по полю: лучшая из подходящих основ (иначе десяток основ по префиксу «перевесит» точное совпадение)
+  function fieldScore(s, f, term) {
+    var best = 0, map = s.tf[f], norm = BM25_K1 * (1 - BM25_B[f] + BM25_B[f] * s.lens[f] / avgLen[f]);
+    for (var st in term.stems) {
+      var tf = map[st];
+      if (!tf) continue;
+      var v = term.stems[st] * term.idf * tf * (BM25_K1 + 1) / (tf + norm);
+      if (v > best) best = v;
+    }
+    // Совпадение в названии крупного раздела чуть весомее: «цены» → сначала «Управление ценами», потом его пункты
+    return best * FIELD_BOOST[f] * (f === 'title' ? 1 + Math.max(0, 3 - s.level) * 0.1 : 1);
+  }
+
+  var lastTerms = [], partial = false, fixedQuery = '';
   function smart(query) {
-    var terms = words(query).filter(function (w) { return !STOP[w]; }).map(alternatives);
+    var terms = words(query).filter(function (w) { return !STOP[w]; }).map(expand);
+    lastTerms = terms; partial = false;
+    fixedQuery = terms.some(function (t) { return t.fixed; })
+      ? words(query).map(function (w) { var t = terms.filter(function (x) { return x.word === w; })[0]; return t && t.fixed || w; }).join(' ')
+      : '';
     if (!terms.length) return [];
-    var out = [];
+    var full = [], part = [];
     sections.forEach(function (s) {
       if (s.h.classList.contains('mp-hidden')) return;
       var own = (s.h.getAttribute('data-mp') || '').split(' ');
-      var score = 0;
+      var score = 0, hit = 0;
       for (var i = 0; i < terms.length; i++) {
         var t = terms[i];
         // Спросили про маркетплейс, а раздел про другой маркетплейс — пропускаем
         if (t.mp && own[0] && own.indexOf(t.mp) < 0) return;
-        var add = matches(s.tw, t) ? 10 : matches(s.cw, t) ? 4 : matches(s.xw, t) ? 1 : 0;
-        if (!add) return;
-        score += add;
+        var add = fieldScore(s, 'title', t) + fieldScore(s, 'crumbs', t) + fieldScore(s, 'text', t);
+        if (add) { score += add; hit++; }
       }
-      out.push({ s: s, score: score, terms: terms });
+      if (!hit) return;
+      (hit === terms.length ? full : part).push({ s: s, score: score, hit: hit, terms: terms });
     });
+    var out = full;
+    if (!out.length && terms.length > 1 && part.length) {
+      partial = true;
+      var most = Math.max.apply(null, part.map(function (r) { return r.hit; }));
+      out = part.filter(function (r) { return r.hit === most; });
+    }
     out.sort(function (a, b) { return b.score - a.score || a.s.size - b.s.size; });
     return out.slice(0, 8);
   }
@@ -882,12 +1045,12 @@ mark.hit.current { outline: 2px solid var(--accent); }
       return out;
     };
   }
-  function wordRanges(terms) {
+  function wordRanges(terms) {  // слова, чья основа совпала с найденной (включая синонимы и исправленные опечатки)
     return function (text) {
       var out = [], re = /[A-Za-zА-Яа-яЁё0-9]+/g, m;
       while ((m = re.exec(text))) {
-        var w = m[0].toLowerCase().replace(/ё/g, 'е');
-        if (terms.some(function (alts) { return alts.some(function (a) { return fits(w, a); }); })) out.push([m.index, m.index + m[0].length]);
+        var st = stemRu(m[0].toLowerCase().replace(/ё/g, 'е'));
+        if (terms.some(function (t) { return st in t.stems; })) out.push([m.index, m.index + m[0].length]);
       }
       return out;
     };
@@ -897,8 +1060,15 @@ mark.hit.current { outline: 2px solid var(--accent); }
     resBox.innerHTML = '';
     sel = -1;
     if (!found.length) return;
+    if (fixedQuery) {  // исправили опечатку — показываем, что искали на самом деле
+      var fix = document.createElement('div'), fb = document.createElement('button');
+      fix.className = 'q-fix'; fix.textContent = 'Показаны результаты для: ';
+      fb.type = 'button'; fb.textContent = fixedQuery;
+      fb.onclick = function () { q.value = fixedQuery; run(); q.focus(); };
+      fix.appendChild(fb); resBox.appendChild(fix);
+    }
     var head = document.createElement('div');
-    head.className = 'results-title'; head.textContent = 'Разделы';
+    head.className = 'results-title'; head.textContent = partial ? 'Частично совпадает' : 'Разделы';
     resBox.appendChild(head);
     found.forEach(function (r, i) {
       var b = document.createElement('button');
