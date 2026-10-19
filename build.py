@@ -26,7 +26,7 @@ from pathlib import Path
 import mammoth
 import requests
 from bs4 import BeautifulSoup, NavigableString
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
@@ -551,9 +551,44 @@ def logo_html(cfg):
     if path and (ROOT / path).exists():
         p = ROOT / path
         mime = {"svg": "image/svg+xml", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(p.suffix[1:].lower(), "image/png")
-        return f'<img src="data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}" alt="">'
+        data = p.read_bytes() if mime == "image/svg+xml" else transparent_corners(p.read_bytes())
+        if data[1:4] == b"PNG":
+            mime = "image/png"
+        return f'<img src="data:{mime};base64,{base64.b64encode(data).decode()}" alt="">'
     letter = html.escape((cfg.get("title") or "И")[0])
     return f'<span class="badge-logo">{letter}</span>'
+
+
+def transparent_corners(data, tolerance=30):
+    """Белый фон вокруг логотипа → прозрачный (заливка от углов), чтобы в тёмной теме не было белого квадрата.
+
+    Заливается только фон, связанный с краями картинки: белые места внутри логотипа остаются."""
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
+    except Exception:
+        return data
+    w, h = im.size
+    for xy in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        r, g, b, a = im.getpixel(xy)
+        if a and min(r, g, b) >= 255 - tolerance:
+            ImageDraw.floodfill(im, xy, (255, 255, 255, 0), thresh=tolerance)
+    buf = io.BytesIO()
+    im.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def web_image(data):
+    """Скриншот для сайта: PNG → WebP без потерь, если так меньше (обычно на ~20 %). → (байты, расширение)."""
+    try:
+        im = Image.open(io.BytesIO(data))
+        if im.format != "PNG":
+            return data, None
+        has_alpha = im.mode in ("RGBA", "LA") or "transparency" in im.info
+        buf = io.BytesIO()
+        im.convert("RGBA" if has_alpha else "RGB").save(buf, format="WEBP", lossless=True, method=4)
+    except Exception:
+        return data, None
+    return (buf.getvalue(), ".webp") if buf.tell() < len(data) else (data, None)
 
 
 def optimize_docx(docx_bytes):
@@ -736,15 +771,20 @@ def main():
     shutil.rmtree(web, ignore_errors=True)
     (web / "img").mkdir(parents=True)
     used = set(MEDIA_ATTR.findall(content))
+    web_names = {}
     for path in used:
-        (web / "img" / Path(path).name).write_bytes(zf.read(path))
+        data, ext = web_image(zf.read(path))
+        web_names[path] = Path(path).stem + ext if ext else Path(path).name
+        (web / "img" / web_names[path]).write_bytes(data)
     # data-src: картинку подставляет скрипт страницы заранее, за пару экранов до того, как до неё долистают
-    web_content = MEDIA_ATTR.sub(lambda m: f'data-src="img/{Path(m.group(1)).name}"', content)
+    web_content = MEDIA_ATTR.sub(lambda m: f'data-src="img/{web_names[m.group(1)]}" decoding="async"', content)
     web_content = web_content.replace(' loading="lazy"', '')
     (web / WEB_DOCX).write_bytes(docx_bytes)
-    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, ""),
+    (web / "index.html").write_text(render_page(cfg, web_content, today, docx_name, WEB_DOCX, "", web=True),
                                     encoding="utf-8")
     (web / "stats.json").write_text(json.dumps(stats, ensure_ascii=False), encoding="utf-8")
+    (web / "sections.json").write_text(json.dumps(section_index(content, zf), ensure_ascii=False),
+                                       encoding="utf-8")
 
     print(f"Готово: {out}  ({out.stat().st_size / 2**20:.1f} МБ)")
     print(f"        {DIST / docx_name}  ({size_mb:.1f} МБ)"
@@ -753,7 +793,41 @@ def main():
           f" + {len(used)} картинок)")
 
 
-def render_page(cfg, content, today, docx_name, docx_href, docx_data):
+def section_index(content, zf):
+    """Отпечатки разделов для блока «Что нового»: [{id, title, level, hash}] по каждому h1–h3.
+
+    hash — от собственного текста раздела (до следующего заголовка) и содержимого его картинок:
+    перенумерация картинок и отметки фильтра (data-mp) изменением не считаются."""
+    heads = list(re.finditer(r'<h([1-3])\b[^>]*\bid="([^"]+)"[^>]*>', content))
+    index = []
+    for i, m in enumerate(heads):
+        chunk = content[m.end():heads[i + 1].start() if i + 1 < len(heads) else len(content)]
+        imgs = [hashlib.sha1(zf.read(path)).hexdigest() for path in MEDIA_ATTR.findall(chunk)]
+        text = norm_space(html.unescape(re.sub(r"<[^>]+>", " ", chunk)))
+        title = re.search(r'data-title="([^"]*)"', m.group(0))
+        index.append({"id": html.unescape(m.group(2)), "level": int(m.group(1)),
+                      "title": html.unescape(title.group(1)) if title else text[:80],
+                      "hash": hashlib.sha1((text + "|" + ",".join(imgs)).encode()).hexdigest()[:16]})
+    return index
+
+
+def metrika_html(counter):
+    """Код счётчика Яндекс Метрики (без Вебвизора); пусто, если счётчик не задан."""
+    counter = str(counter or "").strip()
+    if not counter.isdigit():
+        return ""
+    return f"""<script>
+window.YM_ID = {counter};
+(function(m,e,t,r,i,k,a){{m[i]=m[i]||function(){{(m[i].a=m[i].a||[]).push(arguments)}};m[i].l=1*new Date();
+for (var j = 0; j < document.scripts.length; j++) {{ if (document.scripts[j].src === r) {{ return; }} }}
+k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)}})
+(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+ym({counter}, "init", {{ clickmap: true, trackLinks: true, accurateTrackBounce: true, trackHash: true }});
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/{counter}" style="position:absolute; left:-9999px;" alt=""></div></noscript>"""
+
+
+def render_page(cfg, content, today, docx_name, docx_href, docx_data, web=False):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     for key, value in {
         "TITLE": html.escape(cfg["title"]),
@@ -766,6 +840,7 @@ def render_page(cfg, content, today, docx_name, docx_href, docx_data):
         "LOGO": logo_html(cfg),
         "DOCX_NAME": html.escape(docx_name),
         "DOCX_HREF": html.escape(docx_href),
+        "METRIKA": metrika_html(cfg.get("metrika_id")) if web else "",
     }.items():
         page = page.replace("{{" + key + "}}", value)
     # Содержимое подставляем последним, чтобы случайные {{…}} в тексте не трогать

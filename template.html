@@ -146,6 +146,20 @@ body {
 }
 .mp-banner[hidden] { display: none; }
 .mp-banner button { margin-left: auto; }
+.whats-new { margin: 0 0 24px; border: 1px solid var(--border); border-radius: 12px; font-size: 14px; }
+.whats-new[hidden] { display: none; }
+.whats-new summary { cursor: pointer; padding: 10px 16px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
+.whats-new summary::-webkit-details-marker { display: none; }
+.whats-new summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+.whats-new[open] summary::before { transform: rotate(90deg); }
+.whats-new .wn-count { color: var(--muted); font-weight: 400; }
+.whats-new ul { list-style: none; margin: 0; padding: 0 16px 12px; }
+.whats-new li { display: flex; gap: 10px; padding: 4px 0; align-items: baseline; }
+.whats-new .wn-date { flex: none; width: 3.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.whats-new .wn-kind { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.whats-new .wn-kind.added { background: color-mix(in srgb, #16a34a 15%, transparent); color: #16a34a; }
+.whats-new a { color: inherit; min-width: 0; }
+.whats-new a:hover { color: var(--accent); }
 .toc { list-style: none; margin: 0; padding: 0; font-size: 14px; }
 .toc-head { display: flex; align-items: center; gap: 4px; margin: 4px 0 6px 2px; }
 .toc-head .mp-title { margin: 0; flex: 1; }
@@ -307,7 +321,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
 
 /* ---------- Печать ---------- */
 @media print {
-  .topbar, .sidebar, .totop, .lightbox, .anchor, .scrim { display: none !important; }
+  .topbar, .sidebar, .totop, .lightbox, .anchor, .scrim, .whats-new { display: none !important; }
   .layout { display: block; }
   .main { padding: 0; }
   .doc { border: 0; box-shadow: none; padding: 0; max-width: none; }
@@ -320,6 +334,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   .fold-fade::after { display: none; }
 }
 </style>
+{{METRIKA}}
 </head>
 <body>
 
@@ -383,6 +398,10 @@ mark.hit.current { outline: 2px solid var(--accent); }
         <span>Показаны разделы только по <b id="mpName"></b> и общие разделы.</span>
         <button class="chip-btn" id="mpReset">Показать все маркетплейсы</button>
       </div>
+      <details class="whats-new" id="whatsNew" hidden>
+        <summary>Что нового <span class="wn-count" id="wnCount"></span></summary>
+        <ul id="wnList"></ul>
+      </details>
       <div class="notice" id="oldBrowser" hidden>Браузер устарел и не может показать скриншоты. Откройте инструкцию в свежем Chrome, Edge, Firefox или Яндекс Браузере — или нажмите «Скачать Word».</div>
       <div class="content" id="content">
 {{CONTENT}}
@@ -404,6 +423,12 @@ mark.hit.current { outline: 2px solid var(--accent); }
   var content = document.getElementById('content');
   var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
                 set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  /* Статистика (Яндекс Метрика): только на сайте и только если в config.json задан metrika_id */
+  function track(kind, data) {
+    try { if (window.YM_ID && window.ym) window.ym(window.YM_ID, kind, data); } catch (e) {}
+  }
+
+  document.getElementById('wordBtn').addEventListener('click', function () { track('reachGoal', 'download_word'); });
 
   /* Тема */
   var saved = store.get('mp-theme');
@@ -589,6 +614,8 @@ mark.hit.current { outline: 2px solid var(--accent); }
     banner.hidden = !code;
     if (code) document.getElementById('mpName').textContent = present.filter(function (m) { return m[0] === code; })[0][1];
     store.set('mp-filter', code);
+    if (!keepScroll && code) track('params', { mp: code });
+    renderNew();
     try {
       var u = new URL(location.href);
       if (code) u.searchParams.set('mp', code); else u.searchParams.delete('mp');
@@ -612,6 +639,33 @@ mark.hit.current { outline: 2px solid var(--accent); }
     if (!present.some(function (m) { return m[0] === start; })) start = '';
     applyMp(start, true);
   }
+
+  /* Что нового: changes.json кладёт ночная публикация (добавленные / обновлённые разделы за 2 недели) */
+  var newData = null, wnBox = document.getElementById('whatsNew');
+  function renderNew() {
+    if (!newData) return;
+    var list = document.getElementById('wnList'), shown = 0;
+    list.innerHTML = '';
+    newData.forEach(function (c) {
+      var h = document.getElementById(c.id);
+      if (!h || h.classList.contains('mp-hidden') || shown >= 10) return;
+      shown++;
+      var li = document.createElement('li'), d = c.date.split('-');
+      var date = document.createElement('span'); date.className = 'wn-date'; date.textContent = d[2] + '.' + d[1];
+      var kind = document.createElement('span'); kind.className = 'wn-kind ' + c.kind;
+      kind.textContent = c.kind === 'added' ? 'новый' : 'обновлён';
+      var a = document.createElement('a'); a.href = '#' + c.id; a.textContent = h.dataset.title || c.title;
+      li.appendChild(date); li.appendChild(kind); li.appendChild(a); list.appendChild(li);
+    });
+    document.getElementById('wnCount').textContent = '· ' + shown;
+    wnBox.hidden = !shown;
+  }
+  if (location.protocol !== 'file:' && window.fetch) {
+    fetch('changes.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (data) { newData = data || []; renderNew(); }).catch(function () {});
+  }
+  wnBox.open = store.get('mp-new') !== 'closed';
+  wnBox.addEventListener('toggle', function () { store.set('mp-new', wnBox.open ? 'open' : 'closed'); });
 
   var sbEl = document.getElementById('sidebar'), sBox = document.getElementById('searchBox');
   sbEl.addEventListener('scroll', function () { sBox.classList.toggle('stuck', sbEl.scrollTop > 0); }, { passive: true });
@@ -888,11 +942,20 @@ mark.hit.current { outline: 2px solid var(--accent); }
     if (term.length < 2) { found = []; render(); info.classList.remove('on'); return; }
     found = smart(term);
     render();
+    clearTimeout(trackTimer);
+    trackTimer = setTimeout(function () { trackSearch(term, found.length); }, 1500);
     mark([content], phraseRanges(term));
     info.classList.add('on');
     if (hits.length) cnt.textContent = 'Точных совпадений в тексте: ' + hits.length;
     else cnt.textContent = found.length ? 'Точных совпадений в тексте нет' : 'Ничего не найдено';
     document.getElementById('qPrev').hidden = document.getElementById('qNext').hidden = !hits.length;
+  }
+  var trackTimer, lastTracked = '';
+  function trackSearch(term, n) {  // что ищут клиенты — в Метрике: «Параметры визитов» и цель search_empty
+    if (term === lastTracked) return;
+    lastTracked = term;
+    track('params', { search: { query: term, found: n } });
+    if (!n) track('reachGoal', 'search_empty');
   }
   function go(i) {
     if (!hits.length) return;
