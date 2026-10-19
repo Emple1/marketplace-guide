@@ -518,7 +518,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   var heads = content.querySelectorAll('h1[id], h2[id], h3[id]');
   var toc = document.getElementById('toc'), links = {};
   // Дерево: пункты с подразделами сворачиваются стрелкой. Открыта ветка текущего раздела
-  // и то, что пользователь раскрыл сам.
+  // и то, что читатель раскрыл сам.
   var CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
                 'stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
   var items = [], stack = [], manual = {}, autoOpen = {};

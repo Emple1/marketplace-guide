@@ -421,7 +421,7 @@ def parse_matrix(rows):
 
 
 def load_matrix_file():
-    """Матрица функционала из matrix.csv в папке проекта (её ведёт Claude по чек-листу пользователя)."""
+    """Запасная матрица функционала из matrix.csv в папке проекта (если Google Таблица недоступна)."""
     if not MATRIX_FILE.exists():
         return {}
     with open(MATRIX_FILE, encoding="utf-8-sig", newline="") as f:
