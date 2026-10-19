@@ -62,6 +62,14 @@ body {
 .brand-title:hover span { color: var(--accent); }
 .footer a { color: var(--accent); }
 .brand img { height: 46px; width: auto; }
+/* Два логотипа: тёмный рисунок для светлой темы, белый — для тёмной */
+.brand .logo-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand .logo-light { display: none; }
+  :root:not([data-theme="light"]) .brand .logo-dark { display: block; }
+}
+:root[data-theme="dark"] .brand .logo-light { display: none; }
+:root[data-theme="dark"] .brand .logo-dark { display: block; }
 .brand .badge-logo {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
   display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 15px;

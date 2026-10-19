@@ -546,15 +546,24 @@ def footer_html(cfg):
     return text
 
 
+def logo_img(path, cls=""):
+    """Логотип файлом из папки проекта → <img> с data:-адресом (белый фон по краям делается прозрачным)."""
+    p = ROOT / path
+    mime = {"svg": "image/svg+xml", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(p.suffix[1:].lower(), "image/png")
+    data = p.read_bytes() if mime == "image/svg+xml" else transparent_corners(p.read_bytes())
+    if data[1:4] == b"PNG":
+        mime = "image/png"
+    cls_attr = f' class="{cls}"' if cls else ""
+    return f'<img{cls_attr} src="data:{mime};base64,{base64.b64encode(data).decode()}" alt="ИнфоСофт">'
+
+
 def logo_html(cfg):
-    path = cfg.get("logo")
-    if path and (ROOT / path).exists():
-        p = ROOT / path
-        mime = {"svg": "image/svg+xml", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(p.suffix[1:].lower(), "image/png")
-        data = p.read_bytes() if mime == "image/svg+xml" else transparent_corners(p.read_bytes())
-        if data[1:4] == b"PNG":
-            mime = "image/png"
-        return f'<img src="data:{mime};base64,{base64.b64encode(data).decode()}" alt="">'
+    """Логотип в шапке: `logo` — для светлой темы, `logo_dark` (если задан) — для тёмной."""
+    light, dark = cfg.get("logo"), cfg.get("logo_dark")
+    if light and (ROOT / light).exists():
+        if dark and (ROOT / dark).exists():
+            return logo_img(light, "logo-light") + logo_img(dark, "logo-dark")
+        return logo_img(light)
     letter = html.escape((cfg.get("title") or "И")[0])
     return f'<span class="badge-logo">{letter}</span>'
 
