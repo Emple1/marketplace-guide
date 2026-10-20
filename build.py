@@ -847,6 +847,18 @@ def build_search_index(content):
     return index
 
 
+def font_face_css():
+    """TildaSans (переменный шрифт с marketplace.is1c.ru) — base64 в страницу,
+    чтобы работал и в однофайловой версии без внешних запросов."""
+    font = ROOT / "fonts" / "TildaSans-VF.woff2"
+    if not font.exists():
+        print("  ⚠ fonts/TildaSans-VF.woff2 не найден — страница останется на системных шрифтах")
+        return ""
+    b64 = base64.b64encode(font.read_bytes()).decode("ascii")
+    return ("@font-face{font-family:'TildaSans';font-style:normal;font-weight:250 1000;"
+            "font-display:swap;src:url(data:font/woff2;base64," + b64 + ") format('woff2');}")
+
+
 def render_page(cfg, content, today, docx_name, docx_href, docx_data, search_index=None):
     page = (ROOT / "template.html").read_text(encoding="utf-8")
     for key, value in {
@@ -854,7 +866,8 @@ def render_page(cfg, content, today, docx_name, docx_href, docx_data, search_ind
         "KICKER": html.escape(cfg.get("kicker", "")),
         "VERSION": html.escape(str(cfg.get("version", "1.0"))),
         "BUILD_DATE": today,
-        "ACCENT": cfg.get("accent", "#2563eb"),
+        "ACCENT": cfg.get("accent", "#f7c500"),
+        "FONT_FACE": font_face_css(),
         "FOOTER": footer_html(cfg),
         "HOME_URL": html.escape(cfg.get("home_url") or "#"),
         "LOGO": logo_html(cfg),
