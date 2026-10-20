@@ -618,7 +618,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
 
   /* Фильтр по маркетплейсу: разделы помечены при сборке атрибутом data-mp */
   var MP = [['wb', 'Wildberries'], ['ozon', 'Ozon'], ['ym', 'Яндекс Маркет'], ['mm', 'МегаМаркет'],
-            ['ali', 'AliExpress'], ['mvideo', 'М.Видео'], ['lamoda', 'Lamoda'], ['magnit', 'Магнит Маркет']];
+            ['ali', 'AliExpress'], ['mvideo', 'М.Видео'], ['lamoda', 'Lamoda']];
   var tagged = content.querySelectorAll('[data-mp]');
   // Кнопка — только для маркетплейсов, у которых есть свои разделы (заголовки)
   var present = MP.filter(function (m) {
@@ -799,7 +799,6 @@ mark.hit.current { outline: 2px solid var(--accent); }
     ['aliexpress', 'али', 'алиэкспресс', 'ali', 'алиэкспрес'],
     ['мвидео', 'видео', 'mvideo', 'эльдорадо'],
     ['lamoda', 'ламода'],
-    ['магнит', 'магнитмаркет'],
     ['токен', 'ключ', 'токены', 'ключи'],
     ['маркировка', 'чз', 'честный', 'маркировкой'],
     ['цена', 'цены', 'прайс', 'репрайсер'],
@@ -819,8 +818,8 @@ mark.hit.current { outline: 2px solid var(--accent); }
     return w.slice(0, w.length <= 5 ? w.length - 1 : Math.max(4, Math.ceil(w.length * 0.6)));
   }
   function fits(token, alt) { return alt.length <= 3 ? token === alt : token.indexOf(stem(alt)) === 0; }
-  // Первые 8 групп — маркетплейсы (коды как в фильтре)
-  var MP_CODES = ['wb', 'ozon', 'ym', 'mm', 'ali', 'mvideo', 'lamoda', 'magnit'];
+  // Первые 7 групп — маркетплейсы (коды как в фильтре)
+  var MP_CODES = ['wb', 'ozon', 'ym', 'mm', 'ali', 'mvideo', 'lamoda'];
   function alternatives(w) {
     for (var g = 0; g < SYN.length; g++) {
       if (SYN[g].some(function (m) { return w === m || (m.length > 3 && w.length > 3 && fits(w, m)); })) {
