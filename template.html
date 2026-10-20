@@ -315,6 +315,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
   box-shadow: var(--shadow);
 }
 .totop.on { opacity: 1; pointer-events: auto; }
+.totop.up { bottom: 68px; }
 .scrim { display: none; }
 
 /* ---------- Телефон / планшет ---------- */
@@ -434,6 +435,9 @@ mark.hit.current { outline: 2px solid var(--accent); }
 <div class="lightbox" id="lightbox"><img alt=""></div>
 <button class="btn icon totop" id="totop" aria-label="В конец инструкции" title="В конец инструкции">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+</button>
+<button class="btn icon totop up" id="toTopBtn" aria-label="В начало инструкции" title="В начало инструкции">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
 </button>
 
 {{SEARCH_INDEX}}
@@ -762,11 +766,12 @@ mark.hit.current { outline: 2px solid var(--accent); }
   lb.onclick = function () { lb.classList.remove('on'); };
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { lb.classList.remove('on'); closeNav(); } });
 
-  /* Кнопка «вниз» (в конец инструкции); наверх — по клику на название в шапке */
-  var toEnd = document.getElementById('totop');
+  /* Круглые кнопки «вниз»/«вверх» (в конец и в начало инструкции); наверх — и по клику на название в шапке */
+  var toEnd = document.getElementById('totop'), toTopBtn = document.getElementById('toTopBtn');
   function toggleEnd() {
     var left = document.documentElement.scrollHeight - (scrollY + innerHeight);
-    toEnd.classList.toggle('on', left > 800);  // у самого конца кнопка не нужна
+    toEnd.classList.toggle('on', left > 800);   // у самого конца кнопка «вниз» не нужна
+    toTopBtn.classList.toggle('on', scrollY > 800);  // у самого верха кнопка «вверх» не нужна
   }
   addEventListener('scroll', toggleEnd, { passive: true });
   setTimeout(toggleEnd, 0);
@@ -777,6 +782,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     scrollTo({ top: 0, behavior: 'instant' });
     history.replaceState(null, '', location.href.split('#')[0]);
   }
+  toTopBtn.onclick = goTop;
   document.getElementById('toTop').onclick = goTop;
 
   /* Поиск: умный по разделам (синонимы, формы слов) + точные совпадения в тексте */
