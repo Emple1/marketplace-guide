@@ -121,6 +121,15 @@ body {
 .q-fix { font-size: 13px; color: var(--muted); margin: 0 0 8px 2px; }
 .q-fix button { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
 .r-crumbs { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+.r-snip { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.r-snip b { color: var(--text); font-weight: 600; }
+.search kbd {
+  position: absolute; right: 10px; top: 13px; font: inherit; font-size: 11px; line-height: 1;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px;
+  pointer-events: none;
+}
+.empty { padding: 4px 10px 10px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.empty ul { margin: 6px 0 0; padding-left: 18px; }
 .content .flash { animation: flash 1.6s ease-out; border-radius: 6px; }
 @keyframes flash { 0%, 30% { background: var(--mark); } 100% { background: transparent; } }
 .search-info button[hidden] { display: none; }
@@ -375,6 +384,7 @@ mark.hit.current { outline: 2px solid var(--accent); }
     <label class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="q" type="search" placeholder="Поиск: например, «заказы вб»" autocomplete="off">
+      <kbd>Ctrl K</kbd>
     </label>
     <div class="search-info" id="qInfo">
       <span id="qCount"></span><span class="spacer"></span>
@@ -987,6 +997,14 @@ mark.hit.current { outline: 2px solid var(--accent); }
     return best * FIELD_BOOST[f] * (f === 'title' ? 1 + Math.max(0, 3 - s.level) * 0.1 : 1);
   }
 
+  // Раскладка клавиатуры: «pfrfps» → «заказы» — ищем и так, если запрос набран не в той раскладке
+  var EN_RU = { q: 'й', w: 'ц', e: 'у', r: 'к', t: 'е', y: 'н', u: 'г', i: 'ш', o: 'щ', p: 'з', '[': 'х', ']': 'ъ',
+                a: 'ф', s: 'ы', d: 'в', f: 'а', g: 'п', h: 'р', j: 'о', k: 'л', l: 'д', ';': 'ж', "'": 'э',
+                z: 'я', x: 'ч', c: 'с', v: 'м', b: 'и', n: 'т', m: 'ь', ',': 'б', '.': 'ю', '/': '.', '`': 'ё' };
+  function en2ru(s) {
+    return s.split('').map(function (ch) { return EN_RU[ch] || ch; }).join('');
+  }
+
   var lastTerms = [], partial = false, fixedQuery = '';
   function smart(query) {
     var terms = words(query).filter(function (w) { return !STOP[w]; }).map(expand);
@@ -1046,11 +1064,33 @@ mark.hit.current { outline: 2px solid var(--accent); }
       });
     });
   }
-  function phraseRanges(term) {
+  // Запрос как есть и в другой раскладке: берём вариант с лучшим результатом
+  // (все слова найдены без исправлений > с исправлением опечатки > частично > ничего)
+  function smartAll(query) {
+    function quality(res) { return !res.length ? 0 : partial ? 1 : fixedQuery ? 2 : 3; }
+    var res = smart(query), best = { res: res, q: quality(res), terms: lastTerms, partial: partial, fixed: fixedQuery };
+    var alt = en2ru(query);
+    // Только латиница без кириллицы — иначе «wb», «ozon» и т. п. превращались бы в бессмыслицу
+    if (alt !== query && /[a-z]/.test(query) && !/[а-я]/.test(query)) {
+      var res2 = smart(alt), q2 = quality(res2);
+      if (q2 > best.q) best = { res: res2, q: q2, terms: lastTerms, partial: partial, fixed: fixedQuery || alt };
+    }
+    lastTerms = best.terms; partial = best.partial; fixedQuery = best.fixed;
+    return best.res;
+  }
+
+  // Точные совпадения нескольких фраз сразу (запрос + его вариант в другой раскладке)
+  function phraseRanges(terms) {
     return function (text) {
-      var lower = text.toLowerCase(), out = [], j = 0;
-      while ((j = lower.indexOf(term, j)) >= 0) { out.push([j, j + term.length]); j += term.length; }
-      return out;
+      var lower = text.toLowerCase(), out = [];
+      terms.forEach(function (term) {
+        var j = 0;
+        while ((j = lower.indexOf(term, j)) >= 0) { out.push([j, j + term.length]); j += term.length; }
+      });
+      out.sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [], end = -1;
+      out.forEach(function (r) { if (r[0] >= end) { merged.push(r); end = r[1]; } });
+      return merged;
     };
   }
   function wordRanges(terms) {  // слова, чья основа совпала с найденной (включая синонимы и исправленные опечатки)
@@ -1064,10 +1104,42 @@ mark.hit.current { outline: 2px solid var(--accent); }
     };
   }
 
-  function render() {
+  // Сниппет: кусок текста раздела вокруг первого совпадения, найденные слова выделены
+  function snippet(r) {
+    var text = '';
+    for (var i = 1; i < r.s.els.length && text.length < 4000; i++) text += ' ' + r.s.els[i].textContent;
+    text = text.replace(/\s+/g, ' ');
+    var test = wordRanges(r.terms), first = test(text);
+    if (!first.length) return null;
+    var at = first[0][0], from = Math.max(0, at - 50), to = Math.min(text.length, at + 120);
+    var win = text.slice(from, to), ranges = test(win);
+    var box = document.createElement('span');
+    box.className = 'r-snip';
+    if (from > 0) box.appendChild(document.createTextNode('…'));
+    var pos = 0;
+    ranges.forEach(function (rg) {
+      box.appendChild(document.createTextNode(win.slice(pos, rg[0])));
+      var b = document.createElement('b'); b.textContent = win.slice(rg[0], rg[1]);
+      box.appendChild(b); pos = rg[1];
+    });
+    box.appendChild(document.createTextNode(win.slice(pos) + (to < text.length ? '…' : '')));
+    return box;
+  }
+  function render(showEmpty) {
     resBox.innerHTML = '';
     sel = -1;
-    if (!found.length) return;
+    if (!found.length) {
+      if (showEmpty) {
+        var d = document.createElement('div');
+        d.className = 'empty';
+        d.innerHTML = 'По запросу ничего не нашлось. Попробуйте:' +
+          '<ul><li>переформулировать — например, «цены» вместо «установка цен»;</li>' +
+          '<li>добавить название маркетплейса: «заказы вб», «остатки озон»;</li>' +
+          '<li>проверить раскладку клавиатуры — «pfrfps» мы уже понимаем как «заказы».</li></ul>';
+        resBox.appendChild(d);
+      }
+      return;
+    }
     if (fixedQuery) {  // исправили опечатку — показываем, что искали на самом деле
       var fix = document.createElement('div'), fb = document.createElement('button');
       fix.className = 'q-fix'; fix.textContent = 'Показаны результаты для: ';
@@ -1088,6 +1160,8 @@ mark.hit.current { outline: 2px solid var(--accent); }
         c.textContent = (r.s.crumbs.length > 2 ? '… › ' : '') + r.s.crumbs.slice(-2).join(' › ');
         b.appendChild(c);
       }
+      var sn = snippet(r);
+      if (sn) b.appendChild(sn);
       b.onclick = function () { openResult(i); };
       resBox.appendChild(b);
     });
@@ -1110,9 +1184,11 @@ mark.hit.current { outline: 2px solid var(--accent); }
     clear();
     var term = q.value.trim().toLowerCase();
     if (term.length < 2) { found = []; render(); info.classList.remove('on'); return; }
-    found = smart(term);
-    render();
-    mark([content], phraseRanges(term));
+    found = smartAll(term);
+    var phrases = [term], altTerm = en2ru(term);
+    if (altTerm !== term && /[a-z]/.test(term) && !/[а-я]/.test(term)) phrases.push(altTerm);
+    mark([content], phraseRanges(phrases));
+    render(!found.length && !hits.length);
     info.classList.add('on');
     if (hits.length) cnt.textContent = 'Точных совпадений в тексте: ' + hits.length;
     else cnt.textContent = found.length ? 'Точных совпадений в тексте нет' : 'Ничего не найдено';
@@ -1151,6 +1227,20 @@ mark.hit.current { outline: 2px solid var(--accent); }
   });
   document.getElementById('qNext').onclick = function () { go(pos + 1); };
   document.getElementById('qPrev').onclick = function () { go(pos - 1); };
+
+  // Горячие клавиши: Ctrl+K или «/» — в поиск, Esc в поле — очистить
+  document.addEventListener('keydown', function (e) {
+    var tag = ((e.target && e.target.tagName) || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') {
+      if (e.key === 'Escape' && e.target === q) { q.value = ''; run(); q.blur(); }
+      return;
+    }
+    if ((e.key === 'k' || e.key === 'K' || e.key === 'л' || e.key === 'Л') && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault(); q.focus(); q.select();
+    } else if (e.key === '/') {
+      e.preventDefault(); q.focus();
+    }
+  });
 })();
 </script>
 </body>
