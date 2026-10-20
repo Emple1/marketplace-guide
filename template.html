@@ -285,9 +285,10 @@ body {
 .content td p:last-child, .content th p:last-child { margin: 0; }
 .content td img { box-shadow: none; }
 /* Таблица «поле → описание»: первый столбец — название поля, без строки-шапки */
-.content .def-table tr:first-child td + td { background: none; font-weight: inherit; }
+.content .def-table tr:first-child td { background: none; }
+.content .def-table tr:first-child td + td { font-weight: inherit; }
 .content .def-table td:first-child {
-  width: 26%; min-width: 8em; font-weight: 600; background: var(--code-bg);
+  width: 26%; min-width: 8em; font-weight: 600;
   border-right: 1px solid var(--border); hyphens: manual; -webkit-hyphens: manual;
 }
 /* Пока скриншот грузится — мягкая «переливающаяся» заглушка вместо белого прямоугольника */
