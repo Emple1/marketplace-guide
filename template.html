@@ -584,7 +584,11 @@ mark.hit.current { outline: 2px solid var(--accent); }
       if (!cur && heads.length) cur = heads[0].id;
       if (cur !== window.__tocCur) { window.__tocCur = cur; setActiveBranch(cur); }
       Object.keys(links).forEach(function (id) { links[id].classList.toggle('active', id === cur); });
-      if (cur && links[cur] && document.body.classList.contains('nav-open') === false) {
+      // Пока показаны результаты поиска, панель не листаем: иначе список результатов
+      // уезжает вверх и до следующего результата приходится прокручивать панель обратно
+      // (openResult гасит qInfo, но сам список результатов остаётся — проверяем его)
+      var searchOn = document.getElementById('qResults').childNodes.length > 0;
+      if (cur && links[cur] && !searchOn && document.body.classList.contains('nav-open') === false) {
         var l = links[cur], sb = document.getElementById('sidebar');
         var r = l.getBoundingClientRect(), s = sb.getBoundingClientRect();
         // Листаем только саму панель (не страницу) и не прячем пункт под закреплённым поиском
