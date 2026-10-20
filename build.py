@@ -75,7 +75,6 @@ MARKETPLACES = {
     "ali": r"aliexpress|алиэкспресс",
     "mvideo": r"м\.\s*видео|мвидео|эльдорадо",
     "lamoda": r"lamoda|ламода",
-    "magnit": r"магнит\s*маркет",
 }
 
 
