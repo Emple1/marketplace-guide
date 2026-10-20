@@ -281,13 +281,11 @@ body {
 .content th, .content td { overflow-wrap: break-word; word-break: normal; hyphens: auto; -webkit-hyphens: auto; }
 .content th, .content tr:first-child td { background: var(--code-bg); font-weight: 600; }
 .content tr:last-child td { border-bottom: 0; }
-.content tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
 .content td p, .content th p { margin: 0 0 6px; }
 .content td p:last-child, .content th p:last-child { margin: 0; }
 .content td img { box-shadow: none; }
 /* Таблица «поле → описание»: первый столбец — название поля, без строки-шапки */
-.content .def-table tr:first-child td { background: none; font-weight: inherit; }
-.content .def-table tr:nth-child(even) td { background: none; }
+.content .def-table tr:first-child td + td { background: none; font-weight: inherit; }
 .content .def-table td:first-child {
   width: 26%; min-width: 8em; font-weight: 600; background: var(--code-bg);
   border-right: 1px solid var(--border); hyphens: manual; -webkit-hyphens: manual;
