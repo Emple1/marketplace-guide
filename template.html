@@ -277,12 +277,21 @@ body {
 .table-wrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--border); border-radius: 10px; }
 .content table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
 .content th, .content td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+/* В ячейках слова не рвём посередине (общее правило .content рвёт где угодно) — переносим по слогам */
+.content th, .content td { overflow-wrap: break-word; word-break: normal; hyphens: auto; -webkit-hyphens: auto; }
 .content th, .content tr:first-child td { background: var(--code-bg); font-weight: 600; }
 .content tr:last-child td { border-bottom: 0; }
 .content tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
 .content td p, .content th p { margin: 0 0 6px; }
 .content td p:last-child, .content th p:last-child { margin: 0; }
 .content td img { box-shadow: none; }
+/* Таблица «поле → описание»: первый столбец — название поля, без строки-шапки */
+.content .def-table tr:first-child td { background: none; font-weight: inherit; }
+.content .def-table tr:nth-child(even) td { background: none; }
+.content .def-table td:first-child {
+  width: 26%; min-width: 8em; font-weight: 600; background: var(--code-bg);
+  border-right: 1px solid var(--border); hyphens: manual; -webkit-hyphens: manual;
+}
 /* Пока скриншот грузится — мягкая «переливающаяся» заглушка вместо белого прямоугольника */
 .content img[data-media], .content img[data-src] {
   background: linear-gradient(100deg, var(--code-bg) 30%, var(--border) 50%, var(--code-bg) 70%);
@@ -347,6 +356,12 @@ mark.hit.current { outline: 2px solid var(--accent); }
   .btn.primary { width: 38px; padding: 0; justify-content: center; }
   .hero h1 { font-size: 26px; }
   .content h1 { font-size: 22px; }
+  /* «Поле → описание» на телефоне — в столбик: название поля над описанием, без горизонтальной прокрутки */
+  .content .def-table, .content .def-table tbody, .content .def-table tr, .content .def-table td { display: block; width: auto; }
+  .content .def-table td:first-child { width: auto; min-width: 0; border-right: 0; border-bottom: 0; padding-bottom: 6px; }
+  .content .def-table tr { border-bottom: 1px solid var(--border); }
+  .content .def-table tr:last-child { border-bottom: 0; }
+  .content .def-table td:last-child { border-bottom: 0; }
 }
 
 /* ---------- Печать ---------- */

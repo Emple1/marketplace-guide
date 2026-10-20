@@ -314,6 +314,17 @@ def postprocess(fragment, own_doc_id=None, support_url=None, collapsed=(), matri
     for table in soup.find_all("table"):
         if table.find_parent("table"):
             continue
+        # В Google Doc у таблиц «поле → описание» все строки помечены как заголовок (повтор строки
+        # заголовка) — mammoth делает из них <th> в <thead>. Это обычные строки: превращаем в <td>,
+        # таблицу из двух столбцов помечаем как «поле → описание» (своя вёрстка, на телефоне — в столбик)
+        rows = table.find_all("tr")
+        if rows and not table.find("td"):
+            for th in table.find_all("th"):
+                th.name = "td"
+            for thead in table.find_all("thead"):
+                thead.name = "tbody"
+            if all(len(r.find_all("td", recursive=False)) == 2 for r in rows):
+                table["class"] = table.get("class", []) + ["def-table"]
         wrap = soup.new_tag("div", attrs={"class": "table-wrap"})
         table.wrap(wrap)
 
