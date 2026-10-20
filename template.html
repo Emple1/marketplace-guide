@@ -6,9 +6,14 @@
 <title>{{TITLE}}</title>
 <meta name="generator" content="build.py — собрано {{BUILD_DATE}}">
 <style>
+{{FONT_FACE}}
 :root {
   --accent: {{ACCENT}};
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  /* Текст на жёлтой заливке и тёмный оттенок акцента для цветного текста (жёлтый на белом нечитаем) */
+  --on-accent: #1a1a1a;
+  --accent-ink: #8a6800;
+  --btn: #ebebeb;
   --bg: #f6f7f9;
   --paper: #ffffff;
   --text: #1d2330;
@@ -28,6 +33,7 @@
   :root:not([data-theme="light"]) {
     --bg: #0f1218; --paper: #161a22; --text: #e6e8ec; --muted: #98a2b3;
     --border: #2a303c; --code-bg: #1f2430; --mark: #7a5d00;
+    --accent-ink: #ffd24d; --btn: #262b36;
     --info-bg: #15213a; --warn-bg: #2b2111; --danger-bg: #2e1614; --tip-bg: #11281d;
     --shadow: none; color-scheme: dark;
   }
@@ -35,6 +41,7 @@
 :root[data-theme="dark"] {
   --bg: #0f1218; --paper: #161a22; --text: #e6e8ec; --muted: #98a2b3;
   --border: #2a303c; --code-bg: #1f2430; --mark: #7a5d00;
+  --accent-ink: #ffd24d; --btn: #262b36;
   --info-bg: #15213a; --warn-bg: #2b2111; --danger-bg: #2e1614; --tip-bg: #11281d;
   --shadow: none; color-scheme: dark;
 }
@@ -43,7 +50,7 @@
 html { scroll-behavior: auto; }  /* без плавной прокрутки: иначе по дороге грузятся все скриншоты */
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font: 16px/1.65 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 16px/1.65 "TildaSans", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -59,8 +66,8 @@ body {
 .brand-logo { display: flex; flex: none; }
 .brand-title { min-width: 0; overflow: hidden; }
 .brand-title span { display: block; }
-.brand-title:hover span { color: var(--accent); }
-.footer a { color: var(--accent); }
+.brand-title:hover span { color: var(--accent-ink); }
+.footer a { color: var(--accent-ink); }
 .brand img { height: 46px; width: auto; }
 /* Два логотипа: тёмный рисунок для светлой темы, белый — для тёмной */
 .brand .logo-dark { display: none; }
@@ -72,18 +79,19 @@ body {
 :root[data-theme="dark"] .brand .logo-dark { display: block; }
 .brand .badge-logo {
   width: 30px; height: 30px; border-radius: 8px; flex: none;
-  display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 15px;
+  display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-size: 15px;
 }
 .brand span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .spacer { flex: 1; }
+/* Кнопки — как на marketplace.is1c.ru: основные жёлтые с чёрным текстом, вторичные серые, радиус 10px */
 .btn {
   display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; flex: none;
-  border-radius: 10px; border: 1px solid var(--border); background: var(--paper); color: var(--text);
-  font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; text-decoration: none; white-space: nowrap;
+  border-radius: 10px; border: 1px solid var(--btn); background: var(--btn); color: var(--text);
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; white-space: nowrap;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { filter: brightness(.95); }
 .btn.icon { width: 38px; padding: 0; justify-content: center; }
 .btn svg { width: 18px; height: 18px; flex: none; }
 
@@ -121,7 +129,7 @@ body {
 .result:hover, .result.sel { background: var(--accent-soft); }
 .r-title { display: block; font-size: 14px; font-weight: 600; line-height: 1.35; }
 .q-fix { font-size: 13px; color: var(--muted); margin: 0 0 8px 2px; }
-.q-fix button { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.q-fix button { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-ink); cursor: pointer; text-decoration: underline; }
 .r-crumbs { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
 .r-snip { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
 .r-snip b { color: var(--text); font-weight: 600; }
@@ -145,12 +153,12 @@ body {
   padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; line-height: 1.4;
 }
 .chip-btn:hover { border-color: var(--accent); }
-.chip-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip-btn.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .mp-hidden { display: none !important; }
 .folded { display: none !important; }
 .fold-btn {
   display: inline-flex; align-items: center; gap: 6px; margin: 0 0 18px; padding: 6px 14px; border-radius: 999px;
-  border: 1px solid var(--border); background: var(--paper); color: var(--accent); font: inherit; font-size: 14px;
+  border: 1px solid var(--border); background: var(--paper); color: var(--accent-ink); font: inherit; font-size: 14px;
   font-weight: 500; cursor: pointer;
 }
 .fold-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
@@ -177,10 +185,10 @@ body {
 .whats-new ul { list-style: none; margin: 0; padding: 0 16px 12px; }
 .whats-new li { display: flex; gap: 10px; padding: 4px 0; align-items: baseline; }
 .whats-new .wn-date { flex: none; width: 3.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
-.whats-new .wn-kind { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.whats-new .wn-kind { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); }
 .whats-new .wn-kind.added { background: color-mix(in srgb, #16a34a 15%, transparent); color: #16a34a; }
 .whats-new a { color: inherit; min-width: 0; }
-.whats-new a:hover { color: var(--accent); }
+.whats-new a:hover { color: var(--accent-ink); }
 .toc { list-style: none; margin: 0; padding: 0; font-size: 14px; }
 .toc-head { display: flex; align-items: center; gap: 4px; margin: 4px 0 6px 2px; }
 .toc-head .mp-title { margin: 0; flex: 1; }
@@ -188,14 +196,14 @@ body {
   border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
   padding: 3px 6px; border-radius: 6px;
 }
-.toc-tool:hover { color: var(--accent); background: var(--accent-soft); }
+.toc-tool:hover { color: var(--accent-ink); background: var(--accent-soft); }
 .toc li { position: relative; }
 .toc li.toc-closed { display: none; }
 .toc-tog {
   position: absolute; left: -2px; top: 5px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
   background: none; color: var(--muted); cursor: pointer; display: grid; place-items: center;
 }
-.toc-tog:hover { color: var(--accent); background: var(--accent-soft); }
+.toc-tog:hover { color: var(--accent-ink); background: var(--accent-soft); }
 .toc-tog svg { width: 14px; height: 14px; transition: transform .15s; transform: rotate(-90deg); }
 .toc-tog.open svg { transform: none; }
 .toc .l2 .toc-tog { left: 10px; }
@@ -204,10 +212,10 @@ body {
   border-left: 2px solid transparent; line-height: 1.4;
 }
 .toc a:hover { color: var(--text); background: var(--accent-soft); }
-.toc a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.toc a.active { color: var(--accent-ink); background: var(--accent-soft); font-weight: 600; }
 .toc .l1 > a { color: var(--text); font-weight: 600; margin-top: 6px; padding-left: 20px; }
 .toc .l1 > .toc-tog { top: 11px; }
-.toc .l1 > a.active { color: var(--accent); }
+.toc .l1 > a.active { color: var(--accent-ink); }
 .toc .l2 > a { padding-left: 32px; }
 .toc .l3 > a { padding-left: 44px; font-size: 13px; }
 /* Скрытая боковая панель на компьютере */
@@ -224,7 +232,7 @@ body {
 
 /* ---------- Титул ---------- */
 .hero { padding-bottom: 28px; margin-bottom: 32px; border-bottom: 1px solid var(--border); }
-.hero .kicker { color: var(--accent); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.hero .kicker { color: var(--accent-ink); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .hero h1 { font-size: 34px; line-height: 1.2; margin: 8px 0 12px; border: 0; padding: 0; }
 .hero .meta { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--code-bg); color: var(--muted); }
@@ -242,7 +250,7 @@ body {
 }
 .content .anchor svg { width: .75em; height: .75em; min-width: 14px; min-height: 14px; }
 .content :is(h1,h2,h3,h4,h5,h6):hover .anchor, .content .anchor:focus-visible { opacity: 1; }
-.content .anchor:hover { color: var(--accent); background: var(--accent-soft); }
+.content .anchor:hover { color: var(--accent-ink); background: var(--accent-soft); }
 @media (hover: none) { .content .anchor { display: none; } }
 .toast {
   position: fixed; left: 50%; bottom: 24px; z-index: 120; transform: translate(-50%, 20px); opacity: 0;
@@ -252,7 +260,7 @@ body {
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .content { overflow-wrap: anywhere; }
 .content p { margin: 0 0 14px; scroll-margin-top: 76px; }
-.content a { color: var(--accent); }
+.content a { color: var(--accent-ink); }
 .content ul, .content ol { padding-left: 26px; margin: 0 0 14px; }
 .content li { margin: 4px 0; }
 .content li::marker { color: var(--accent); }
